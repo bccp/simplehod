@@ -1,0 +1,35 @@
+SImple HOD
+----------
+
+This is an adoption of Martin White's simple HOD scheme into Python.
+
+No bloat intended. Just the basic stuff.
+
+- 'simplehod.hod' is the main entry point.
+
+- If only intended to draw satellites from NFW, use `simplehod.mksat`. 
+
+- Drawing centrals, use `simplehod.mkcen`.
+
+- computing number of objects , use `simplehod.mkn`.
+
+FAQ:
+
+- Q: What if I do not know the concentration of halos?
+
+  A: use 5~7 is usually good enough. Or compute it from mass from some formula
+     like halotools [1], or
+
+     https://nbodykit.readthedocs.io/en/latest/api/_autosummary/nbodykit.transform.html#nbodykit.transform.HaloConcentration
+
+- Q: What if I do not know the virial radius of halos?
+
+  A: https://nbodykit.readthedocs.io/en/latest/api/_autosummary/nbodykit.transform.html#nbodykit.transform.HaloRadius
+
+- Q: What if I do not know the velocity dispersion of halos?
+
+  A: https://nbodykit.readthedocs.io/en/latest/api/_autosummary/nbodykit.transform.html#nbodykit.transform.HaloSigma
+  A: https://nbodykit.readthedocs.io/en/latest/api/_autosummary/nbodykit.transform.html#nbodykit.transform.HaloVelocityDispersion
+
+
+.. [1] :: https://github.com/astropy/halotools/blob/v0.6/halotools/empirical_models/phase_space_models/analytic_models/satellites/nfw/conc_mass/dutton_maccio14.py#L11

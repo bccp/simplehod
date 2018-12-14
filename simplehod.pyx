@@ -31,9 +31,8 @@ def hod(rng, mfof,
    
     Every other variable is broadcast against mfof.
 
-    if pos is None, only return (ncen, nsat) number of objects
+    if pos is None, only return (ncen, nsat) integer number of objects
     for centrals and satellites.
-
 
     """ 
     if not isinstance(rng, RandomState):
@@ -41,15 +40,17 @@ def hod(rng, mfof,
 
     seed1, seed2, seed3 = rng.randint(0x7fffffff, size=3)
 
-    ncen, nsat = mkn(RandomState(seed1),
+    ncen, nsat = mkn(
             mfof=mfof,
             mcut=mcut, sigma=sigma, m1=m1, kappa=kappa,
             alpha=alpha)
 
+
+    ncen, nsat = mknint(RandomState(seed1), ncen, nsat)
+
     if pos is None:
         return ncen, nsat
     else:
-        
         cpos, cvel = mkcen(RandomState(seed2), ncen,
             pos, vel, vdisp, vcen=vcen)
 
@@ -59,7 +60,27 @@ def hod(rng, mfof,
         return (ncen, cpos, cvel), (nsat, spos, svel)
 
 
-def mkn(rng, mfof,
+def mknint(rng, ncen, nsat):
+    """ generate integer samples of ncen and nsat.
+
+        This step is needed after mkn if you want the exact
+        number of objects.
+
+        ncen is draw from a binomial with n = 1 (thus we
+        at most have 1 ncen)
+
+        nsat is draw from a poisson.
+    """
+
+    if not isinstance(rng, RandomState):
+        rng = RandomState(rng)
+
+    ncen = rng.binomial(1, ncen)
+    nsat = rng.poisson(nsat)
+
+    return ncen, nsat
+
+def mkn(mfof,
     mcut=10**13.35, sigma=0.25, m1=10**12.8, kappa=1.0,
     alpha=0.8):
     """
@@ -74,26 +95,26 @@ def mkn(rng, mfof,
     m1 is the mass per satellite
     kappa and alpha controls number of satellites.
 
-    Returns ncen, nsat from halo mass.
-    """
+    Returns ncen, nsat as expected number of galaxies per halo.
 
-    if not isinstance(rng, RandomState):
-        rng = RandomState(rng)
+    use numpy.random.binomial to draw nsat from the expection.
+    use numpy.random.poisson to draw nsat from the expection.
+
+    """
 
     mfof, mcut, sigma, m1, kappa, alpha = numpy.broadcast_arrays(
             mfof, mcut, sigma, m1, kappa, alpha)
 
-    rnga = RNGAdapter(rng, min(len(mfof), 1024 * 8))
-
-    return _mkn(rnga, mfof=mfof.astype('=f4'),
+    ncen, nsat = _mkn(mfof=mfof.astype('=f4'),
             mcut=mcut.astype('=f4'),
             sigma=sigma.astype('=f4'),
             m1=m1.astype('=f4'),
             kappa=kappa.astype('=f4'),
             alpha=alpha.astype('=f4'))
 
+    return ncen, nsat
+
 cdef _mkn(
-        RNGAdapter rnga,
         const float [:] mfof,
         const float [:] mcut,
         const float [:] sigma,
@@ -104,11 +125,11 @@ cdef _mkn(
 
     cdef int igrp
 
-    cdef int [:] ncen
-    cdef int [:] nsat
+    cdef float [:] ncen
+    cdef float [:] nsat
 
-    ncen = numpy.zeros(mfof.shape[0], dtype='i4')
-    nsat = numpy.zeros(mfof.shape[0], dtype='i4')
+    ncen = numpy.zeros(mfof.shape[0], dtype='f4')
+    nsat = numpy.zeros(mfof.shape[0], dtype='f4')
 
     for igrp in range(0, mfof.shape[0]):
 
@@ -123,15 +144,12 @@ cdef _mkn(
         else:
             if logm > -5 * sigma[igrp]:
                 mu = 0.5*(1+erf(logm/sqrt(2.0)/sigma[igrp]))
-                if rnga.drand() < mu:
-                    ncen[igrp] = 1
+                ncen[igrp] = mu
 
         # sats for cen
         if mass > kappa[igrp]*mcut[igrp]:
             mu = ((mass-kappa[igrp]*mcut[igrp])/m1[igrp]) ** alpha[igrp]
-            nsat[igrp] = rnga.poisson(mu)
-        else:
-            nsat[igrp] = 0
+            nsat[igrp] = mu
 
     return numpy.array(ncen), numpy.array(nsat)
 
@@ -307,18 +325,6 @@ cdef class RNGAdapter:
     
     cdef float normal(self):
         return sqrt(-2*log(self.drand()))*cos(2*PI*self.drand())
-
-    cdef int poisson(self, float mu):
-        cdef int k = 0
-        cdef L = exp(-mu)
-        cdef float p = 1
-
-        while True:
-          k = k + 1
-          p = p * self.drand()
-          if p <= L: break
-
-        return k - 1
 
     cdef float get_nfw_r(self, float c):
         cdef float x
