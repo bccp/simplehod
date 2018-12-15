@@ -40,3 +40,5 @@ def test_simplehod():
         numpy.array([mfof, afof, ncen, nsat]).T,
     header = "mfof, afof, ncen, nsat")
 
+if __name__ == '__main__':
+    test_simplehod()
