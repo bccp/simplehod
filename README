@@ -1,9 +1,13 @@
 SImple HOD
 ----------
 
+.. image:: https://travis-ci.org/bccp/simplehod.svg?branch=master
+    :target: https://travis-ci.org/bccp/simplehod
+
+
 This is an adoption of Martin White's simple HOD scheme into Python.
 
-No bloat intended. Just the basic stuff.
+No bloat intended. Just the bare basic stuff.
 
 - 'simplehod.hod' is the main entry point.
 
@@ -11,7 +15,8 @@ No bloat intended. Just the basic stuff.
 
 - Drawing centrals, use `simplehod.mkcen`.
 
-- computing number of objects , use `simplehod.mkn`.
+- computing expected number of galaxies, use `simplehod.mkn`;
+  use `simplehod.mknint` to draw integers from the expection.
 
 FAQ:
 
@@ -28,7 +33,7 @@ FAQ:
 
 - Q: What if I do not know the velocity dispersion of halos?
 
-  A: https://nbodykit.readthedocs.io/en/latest/api/_autosummary/nbodykit.transform.html#nbodykit.transform.HaloSigma
+  A: https://nbodykit.readthedocs.io/en/latest/api/_autosummary/nbodykit.transform.html#nbodykit.transform.HaloSigma (may be a broken link)
   A: https://nbodykit.readthedocs.io/en/latest/api/_autosummary/nbodykit.transform.html#nbodykit.transform.HaloVelocityDispersion
 
 

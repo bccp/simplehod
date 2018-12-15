@@ -306,6 +306,9 @@ cdef _mksat(
     return numpy.array(spos), numpy.array(svel)
 
 cdef class RNGAdapter:
+    """
+    Sampling from numpy's random number generater from C, 'efficiently'
+    """
     cdef long int last
     cdef long int batchsize
     cdef double [:]  buffer
@@ -322,7 +325,7 @@ cdef class RNGAdapter:
             self.buffer = self.rng.uniform(0, 1, size=self.batchsize)
             self.last = 0
         return ret
-    
+
     cdef float normal(self):
         return sqrt(-2*log(self.drand()))*cos(2*PI*self.drand())
 
