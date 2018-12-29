@@ -250,7 +250,7 @@ def mksat(rng,
     conc = numpy.broadcast_to(conc, nsat.shape)
     rvir = numpy.broadcast_to(rvir, nsat.shape)
 
-    return _mksat(rnga,
+    r = _mksat(rnga,
             nsat=nsat.astype('=i4'),
             pos=pos.astype('=f4'),
             vel=vel.astype('=f4'),
@@ -259,6 +259,11 @@ def mksat(rng,
             rvir=rvir.astype('=f4'),
             vsat=vsat.astype('=f4'))
 
+    if rnga._rejections > 10 * len(r[0]):
+        import warnings
+        warnings.warn("Rejection sampling was inefficient: %g/%g samples are used" % (len(r[0]), rnga._rejections), RuntimeWarning)
+
+    return r
 
 cdef _mksat(
         RNGAdapter rnga,
@@ -313,10 +318,12 @@ cdef class RNGAdapter:
     cdef long int batchsize
     cdef double [:]  buffer
     cdef object rng
+    cdef readonly long int _rejections
     def __init__(self, rng, batchsize):
         self.rng = rng
         self.batchsize = batchsize
         self.buffer = rng.uniform(0, 1, size=batchsize)
+        self._rejections = 0
 
     cdef double drand(self):
         cdef double ret  = self.buffer[self.last]
@@ -331,9 +338,28 @@ cdef class RNGAdapter:
 
     cdef float get_nfw_r(self, float c):
         cdef float x
+        # pdf: f(x) = N x /(1+x)**2 = N nfw(x)
+        # peaks at xmax;
+        # M = bound[ f[y] / g[y] ]
+        #   = N nfw(xmax) / g
+        # g(y) is constant here.
+
+        cdef float Mg_N
+        if c > 1:
+            # xmax = 1
+            Mg_N = 1/4.
+        else:
+            # xmax = c
+            Mg_N = nfw(c)
+
+        cdef float r
         while True:
-            x = self.drand() * c;
-            if self.drand() < 4*x/(1+x)/(1+x):
-                return x / c
+            r = self.drand()
+            x = r * c;
+            self._rejections = self._rejections + 1
+            # nfw(x) is rewritten to avoid divisions
+            if self.drand() *(1+x) * (1+x) * Mg_N < x:
+                return r
 
-
+cdef float nfw(x):
+    return x/((1+x) *(1+x))
