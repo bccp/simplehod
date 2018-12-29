@@ -40,5 +40,38 @@ def test_simplehod():
         numpy.array([mfof, afof, ncen, nsat]).T,
     header = "mfof, afof, ncen, nsat")
 
+def test_nfw():
+    from simplehod import mksat
+    import numpy
+
+    nsat = numpy.array([10000], dtype='int')
+    vdisp = 1000
+    conc = 7
+    vsat = 0.5
+    pos = numpy.zeros(shape=(1, 3))
+    vel = numpy.zeros(shape=(1, 3))
+    rvir = 1
+
+    spos, svel = mksat(0, nsat, pos, vel, vdisp, conc, rvir, vsat)
+
+    r = (spos **2).sum(axis=-1)**0.5
+
+    def gsum(x):
+        return numpy.log(1+x) - x/(1+x)
+
+    def pdf(x, c):
+        y = c * x
+        nfw = y * (1+y)**-2
+        norm = gsum(c)
+        return nfw / norm
+
+    # if we are sampling from this PDF, then roughly
+    # we shall be 1-sigma away.
+
+    ll = (- 0.5 * numpy.log(pdf(r, conc)).mean())
+    print(ll)
+    assert abs(ll - 1.0) < 0.1
+
 if __name__ == '__main__':
     test_simplehod()
+    test_nfw()
