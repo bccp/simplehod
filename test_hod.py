@@ -44,9 +44,9 @@ def test_nfw():
     from simplehod import mksat
     import numpy
 
-    nsat = numpy.array([10000], dtype='int')
+    nsat = numpy.array([100000], dtype='int')
     vdisp = 1000
-    conc = 7
+    conc = 0.5
     vsat = 0.5
     pos = numpy.zeros(shape=(1, 3))
     vel = numpy.zeros(shape=(1, 3))
@@ -63,15 +63,15 @@ def test_nfw():
         y = c * x
         nfw = y * (1+y)**-2
         norm = gsum(c)
-        return nfw / norm
+        return c * nfw / norm
 
-    # if we are sampling from this PDF, then roughly
-    # we shall be 1-sigma away.
-
-    ll = (- 0.5 * numpy.log(pdf(r, conc)).mean())
-    print(ll)
-    assert abs(ll - 1.0) < 0.1
-
+    h, edges = numpy.histogram(r, range=(0, 1), bins=100)
+    centers = 0.5*(edges[1:] + edges[:-1])
+    pdftest = h
+    pdfexp  = pdf(centers, conc) * numpy.diff(edges) * len(r)
+    # poisson sample
+    assert(abs(numpy.std((pdftest - pdfexp) / pdfexp ** 0.5) - 1.0) < 0.05)
+    
 if __name__ == '__main__':
-    test_simplehod()
+    #test_simplehod()
     test_nfw()
