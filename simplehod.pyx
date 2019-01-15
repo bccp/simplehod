@@ -168,6 +168,9 @@ def mkcen(rng, ncen,
     
     vcen is the fraction of velocity relative to the dispersion.
 
+    If input data is already halo properties per central, pass
+    ncen = numpy.ones(len(pos), dtype='i4')
+
     Returns (cpos, cvel), position and velocity of centrals.
 
     """
@@ -201,11 +204,12 @@ cdef _mkcen(
     cdef float [:, :] cvel
 
     cdef int Nd = pos.shape[1]
+    cdef int Ndv = vel.shape[1]
 
     ninit = numpy.sum(ncen, dtype='i8')
 
     cpos = numpy.zeros((ninit, Nd), dtype='f4')
-    cvel = numpy.zeros((ninit, Nd), dtype='f4')
+    cvel = numpy.zeros((ninit, Ndv), dtype='f4')
 
     icen = 0
 
@@ -213,8 +217,10 @@ cdef _mkcen(
 
         for j in range(ncen[igrp]):
             for i in range(Nd):
-                grnd = rnga.normal()
                 cpos[icen, i] = pos[igrp, i]
+
+            for i in range(Ndv):
+                grnd = rnga.normal()
                 cvel[icen, i] = vel[igrp, i] + vcen[igrp]*grnd*vdisp[igrp]
 
             icen = icen + 1
@@ -237,6 +243,9 @@ def mksat(rng,
         rng is a random seed or a RandomState object.
         Do not reuse the rng, as the number of draws from the rng
         may change as this code evolves
+
+        If input data is already halo properties per satellites, pass
+        nsat = numpy.ones(len(pos), dtype='i4')
 
         Returns (spos, svel), position and velocity of satellites.
     """
@@ -282,11 +291,12 @@ cdef _mksat(
     cdef float [:, :] cvel
     cdef float dr[3]
     cdef int Nd = pos.shape[1]
+    cdef int Ndv = vel.shape[1]
 
     ninit = numpy.sum(nsat, dtype='i8')
 
     spos = numpy.zeros((ninit, Nd), dtype='f4')
-    svel = numpy.zeros((ninit, Nd), dtype='f4')
+    svel = numpy.zeros((ninit, Ndv), dtype='f4')
 
     isat = 0
 
@@ -302,8 +312,10 @@ cdef _mksat(
             dr[2] = rr*ctheta;
 
             for i in range(Nd):
-                grnd = rnga.normal()
                 spos[isat, i] = pos[igrp, i] + rvir[igrp] * dr[i]
+
+            for i in range(Ndv):
+                grnd = rnga.normal()
                 svel[isat, i] = vel[igrp, i] + vsat[igrp] * grnd * vdisp[igrp]
 
             isat = isat + 1
