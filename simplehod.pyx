@@ -1,4 +1,4 @@
-#cython: language_level=2, boundscheck=True
+#cython: language_level=2, boundscheck=False
 #cython: embedsignature=True
 
 import numpy
@@ -131,25 +131,28 @@ cdef _mkn(
     ncen = numpy.zeros(mfof.shape[0], dtype='f4')
     nsat = numpy.zeros(mfof.shape[0], dtype='f4')
 
-    for igrp in range(0, mfof.shape[0]):
+    cdef float mass, logm, mu
 
-        mass = mfof[igrp]
-        logm = log(mass / mcut[igrp]) 
+    with nogil:
+        for igrp in range(0, mfof.shape[0]):
 
-        ncen[igrp] = 0
+            mass = mfof[igrp]
+            logm = log(mass / mcut[igrp]) 
 
-        if sigma[igrp] <= 0:
-            if mass > mcut[igrp] :
-                ncen[igrp] = 1
-        else:
-            if logm > -5 * sigma[igrp]:
-                mu = 0.5*(1+erf(logm/sqrt(2.0)/sigma[igrp]))
-                ncen[igrp] = mu
+            ncen[igrp] = 0
 
-        # sats for cen
-        if mass > kappa[igrp]*mcut[igrp]:
-            mu = ((mass-kappa[igrp]*mcut[igrp])/m1[igrp]) ** alpha[igrp]
-            nsat[igrp] = mu
+            if sigma[igrp] <= 0:
+                if mass > mcut[igrp] :
+                    ncen[igrp] = 1
+            else:
+                if logm > -5 * sigma[igrp]:
+                    mu = 0.5*(1+erf(logm/sqrt(2.0)/sigma[igrp]))
+                    ncen[igrp] = mu
+
+            # sats for cen
+            if mass > kappa[igrp]*mcut[igrp]:
+                mu = ((mass-kappa[igrp]*mcut[igrp])/m1[igrp]) ** alpha[igrp]
+                nsat[igrp] = mu
 
     return numpy.array(ncen), numpy.array(nsat)
 
@@ -213,17 +216,22 @@ cdef _mkcen(
 
     icen = 0
 
-    for igrp in range(0, ncen.shape[0]):
+    cdef float grnd
 
-        for j in range(ncen[igrp]):
-            for i in range(Nd):
-                cpos[icen, i] = pos[igrp, i]
+    cdef int j, i
 
-            for i in range(Ndv):
-                grnd = rnga.normal()
-                cvel[icen, i] = vel[igrp, i] + vcen[igrp]*grnd*vdisp[igrp]
+    with nogil:
+        for igrp in range(0, ncen.shape[0]):
 
-            icen = icen + 1
+            for j in range(ncen[igrp]):
+                for i in range(Nd):
+                    cpos[icen, i] = pos[igrp, i]
+
+                for i in range(Ndv):
+                    grnd = rnga.normal()
+                    cvel[icen, i] = vel[igrp, i] + vcen[igrp]*grnd*vdisp[igrp]
+
+                icen = icen + 1
 
     return numpy.array(cpos), numpy.array(cvel)
 
@@ -287,8 +295,8 @@ cdef _mksat(
     cdef int igrp
     cdef int isat
 
-    cdef float [:, :] cpos
-    cdef float [:, :] cvel
+    cdef float [:, :] spos
+    cdef float [:, :] svel
     cdef float dr[3]
     cdef int Nd = pos.shape[1]
     cdef int Ndv = vel.shape[1]
@@ -300,25 +308,29 @@ cdef _mksat(
 
     isat = 0
 
-    for igrp in range(0, nsat.shape[0]):
+    cdef float grnd, ctheta, phi, rr
 
-        for j in range(nsat[igrp]):
-            ctheta= -1 + 2*rnga.drand()
-            phi   = 2*PI*rnga.drand()
-            rr    = rnga.get_nfw_r(conc[igrp])
+    cdef int j, i
+    with nogil:
+        for igrp in range(0, nsat.shape[0]):
 
-            dr[0] = rr*sqrt(1-ctheta*ctheta)*cos(phi)
-            dr[1] = rr*sqrt(1-ctheta*ctheta)*sin(phi)
-            dr[2] = rr*ctheta;
+            for j in range(nsat[igrp]):
+                ctheta= -1 + 2*rnga.drand()
+                phi   = 2*PI*rnga.drand()
+                rr    = rnga.get_nfw_r(conc[igrp])
 
-            for i in range(Nd):
-                spos[isat, i] = pos[igrp, i] + rvir[igrp] * dr[i]
+                dr[0] = rr*sqrt(1-ctheta*ctheta)*cos(phi)
+                dr[1] = rr*sqrt(1-ctheta*ctheta)*sin(phi)
+                dr[2] = rr*ctheta;
 
-            for i in range(Ndv):
-                grnd = rnga.normal()
-                svel[isat, i] = vel[igrp, i] + vsat[igrp] * grnd * vdisp[igrp]
+                for i in range(Nd):
+                    spos[isat, i] = pos[igrp, i] + rvir[igrp] * dr[i]
 
-            isat = isat + 1
+                for i in range(Ndv):
+                    grnd = rnga.normal()
+                    svel[isat, i] = vel[igrp, i] + vsat[igrp] * grnd * vdisp[igrp]
+
+                isat = isat + 1
 
     return numpy.array(spos), numpy.array(svel)
 
@@ -337,18 +349,19 @@ cdef class RNGAdapter:
         self.buffer = rng.uniform(0, 1, size=batchsize)
         self._rejections = 0
 
-    cdef double drand(self):
+    cdef double drand(self) nogil:
         cdef double ret  = self.buffer[self.last]
         self.last = self.last + 1
         if self.last == self.buffer.shape[0]:
-            self.buffer = self.rng.uniform(0, 1, size=self.batchsize)
+            with gil:
+                self.buffer = self.rng.uniform(0, 1, size=self.batchsize)
             self.last = 0
         return ret
 
-    cdef float normal(self):
+    cdef float normal(self) nogil:
         return sqrt(-2*log(self.drand()))*cos(2*PI*self.drand())
 
-    cdef float get_nfw_r(self, float c):
+    cdef float get_nfw_r(self, float c) nogil:
         cdef float x
         # pdf: f(x) = N x /(1+x)**2 = N nfw(x)
         # peaks at xmax;
@@ -373,5 +386,5 @@ cdef class RNGAdapter:
             if self.drand() *(1+x) * (1+x) * Mg_N < x:
                 return r
 
-cdef float nfw(x):
+cdef float nfw(float x) nogil:
     return x/((1+x) *(1+x))
