@@ -1,6 +1,6 @@
 
 def test_simplehod():
-    from simplehod import hod, mkhodp_linear
+    from simplehod import hod, mkhodp
     import numpy
 
     mfof = 10 ** numpy.linspace(10, 15, 20)
@@ -9,9 +9,8 @@ def test_simplehod():
     pos = numpy.random.uniform(size=(len(mfof), 3))
     vel = numpy.random.uniform(size=(len(mfof), 3))
 
-    dMda = -0.1
-
-    mcut, m1 = mkhodp_linear(afof, apiv=0.6667, hod_dMda=-0.1, mcut_apiv=10**13.35, m1_apiv=10 ** 12.80)
+    mcut = mkhodp(afof, 0.6667, -0.1, 10**13.35)
+    m1   = mkhodp(afof, 0.6667, -0.1, 10 ** 12.80)
 
     (ncen, cpos, cvel), (nsat, spos, svel) = hod(3333,
                         mfof, pos, vel,
@@ -39,6 +38,24 @@ def test_simplehod():
     numpy.savetxt(stdout,
         numpy.array([mfof, afof, ncen, nsat]).T,
     header = "mfof, afof, ncen, nsat")
+
+
+def test_verbose():
+    from simplehod import mkn_lognorm, mkn_soft_power, mkn_hard_power, mkn_soft_logstep
+    from simplehod import mkcen, mksat, mknint
+    import numpy
+
+    mfof = 10 ** numpy.linspace(10, 15, 20)
+
+    nlrg_cen = mkn_soft_logstep(mfof, mcut=10**13.14, sigma=0.486 * 0.614)
+    nlrg_sat = mkn_soft_power(mfof, m0=10**13.01, m1=10**14.05, alpha=0.97)
+
+    nlrg_sat2 = mkn_hard_power(mfof, m0=10**13.35, m1=10**12.80, alpha=0.8)
+
+    nqso = mkn_lognorm(mfof, mcen=12.4, sigma=0.5 / 2.3)
+
+    for i in zip(nlrg_cen, nlrg_sat, nlrg_sat2, nqso):
+        print(i)
 
 def test_nfw():
     from simplehod import mksat
@@ -74,4 +91,5 @@ def test_nfw():
     
 if __name__ == '__main__':
     #test_simplehod()
-    test_nfw()
+    #test_nfw()
+    test_verbose()

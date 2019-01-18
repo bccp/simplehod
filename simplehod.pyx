@@ -1,64 +1,43 @@
 #cython: language_level=2, boundscheck=False
 #cython: embedsignature=True
 
+"""
+
+The verbose interface:
+
+mkhodp : redshift evolution of mass parameters
+mknint : sampling from expected number of galaxies
+mkn_soft_logstep : expected number from a soft logstep function
+mkn_lognorm : expected number from a log-normal
+mkn_soft_power : expected number from a power law function with soft cut off
+mkn_hard_power : expected number from a soft power law function hard cut off.
+"""
 import numpy
 from libc.math cimport log, sqrt, sin, cos, erf, exp
 from libc.math cimport M_PI as PI
 from numpy.random import RandomState
 
-def mkhodp_linear(afof, apiv, hod_dMda, mcut_apiv, m1_apiv):
-    """ Generate linearly evolving HOD parameter based
+def mkhodp(afof, apiv, dlnM_da, *args):
+    """ Generate log-linearly evolving HOD mass parameters based
         on values at a pivot, a=apiv, for halos at scale factor afof.
 
-        returns mcut, m1 th
+        The parameters are provided as an ordered list on the arguments,
+        and evolved parameters are returned in the same order.
+
+        Each parameter must be mass-like.
+
+        Parameters
+        ----------
+        dlnM_da : float
+            To convert to d log M / da, divide by 2.3 (which is ln 10).
+
+        A typical value suggested by Martin for LRG is apiv=0.6667, dlnM_da=-0.1
+
     """
-    dm = (afof - apiv) * hod_dMda
-    return mcut_apiv * (1 + dm), m1_apiv * (1 + dm)
+    dm = (afof - apiv) * dlnM_da # relative fraction.
 
-def hod(rng, mfof,
-    pos=None, vel=None, conc=None, rvir=None, vdisp=None,
-    mcut=1e13, sigma=0.2, m1=1e12, kappa=0.8,
-    alpha=0.444, vcen=1, vsat=1
-    ):
-    """
-    Apply HOD to a halo catalog.
-
-    rng is a random seed or a RandomState object.
-    Do not reuse the rng, as the number of draws from the rng
-    may change as this code evolves
-
-    pos, vel shall have the same length as mfof.
-   
-    Every other variable is broadcast against mfof.
-
-    if pos is None, only return (ncen, nsat) integer number of objects
-    for centrals and satellites.
-
-    """ 
-    if not isinstance(rng, RandomState):
-        rng = RandomState(rng)
-
-    seed1, seed2, seed3 = rng.randint(0x7fffffff, size=3)
-
-    ncen, nsat = mkn(
-            mfof=mfof,
-            mcut=mcut, sigma=sigma, m1=m1, kappa=kappa,
-            alpha=alpha)
-
-
-    ncen, nsat = mknint(RandomState(seed1), ncen, nsat)
-
-    if pos is None:
-        return ncen, nsat
-    else:
-        cpos, cvel = mkcen(RandomState(seed2), ncen,
-            pos, vel, vdisp, vcen=vcen)
-
-        spos, svel = mksat(RandomState(seed3), nsat,
-            pos, vel, vdisp, conc, rvir, vsat=vsat)
-
-        return (ncen, cpos, cvel), (nsat, spos, svel)
-
+    rt = [ mparam * (1 + dm) for mparam in args ]
+    return rt
 
 def mknint(rng, ncen, nsat):
     """ generate integer samples of ncen and nsat.
@@ -70,66 +49,110 @@ def mknint(rng, ncen, nsat):
         at most have 1 ncen)
 
         nsat is draw from a poisson.
+
+        if None, do not draw integer for that type.
     """
 
     if not isinstance(rng, RandomState):
         rng = RandomState(rng)
 
-    ncen = rng.binomial(1, ncen)
-    nsat = rng.poisson(nsat)
+    if ncen is not None:
+        ncen = rng.binomial(1, ncen)
+
+    if nsat is not None:
+        nsat = rng.poisson(nsat)
 
     return ncen, nsat
 
-def mkn(mfof,
-    mcut=10**13.35, sigma=0.25, m1=10**12.8, kappa=1.0,
-    alpha=0.8):
-    """
-    Main HOD model.
+def mkn_lognorm(mfof, mcen, sigma):
+    r"""
+    Compute the expected number of galaxies from log-normal transformation.
 
-    rng is a random seed or a RandomState object.
-    Do not reuse the rng, as the number of draws from the rng
-    may change as this code evolves
+    The lognormal uses ln, not lg for transformation.
 
-    mcut is the cut off halo mass for centrals
-    sigma is the scattering of mcut
-    m1 is the mass per satellite
-    kappa and alpha controls number of satellites.
+    The second equal sign converts to the form used in
+    arxiv: 1212.4526 (eq 10)
 
-    Returns ncen, nsat as expected number of galaxies per halo.
+    .. math ::
 
-    use numpy.random.binomial to draw nsat from the expection.
-    use numpy.random.poisson to draw nsat from the expection.
+        N_\mathrm{cen} = exp ( -0.5 [\frac{ln M - ln Mcen}{\sigma}]^2 )
+                       = exp ( -0.5 [\frac{log M - log Mcen}{\sigma / ln 10}]^2 )
+
+    We do not model the duty cycle parameter f_cen in ths function.
 
     """
+    mfof, mcen, sigma = numpy.broadcast_arrays(
+            mfof, mcen, sigma)
 
-    mfof, mcut, sigma, m1, kappa, alpha = numpy.broadcast_arrays(
-            mfof, mcut, sigma, m1, kappa, alpha)
+    return _mkn_lognorm(mfof=mfof.astype('=f4'),
+                   mcen=mcen.astype('=f4'),
+                   sigma=sigma.astype('=f4'))
 
-    ncen, nsat = _mkn(mfof=mfof.astype('=f4'),
-            mcut=mcut.astype('=f4'),
-            sigma=sigma.astype('=f4'),
-            m1=m1.astype('=f4'),
-            kappa=kappa.astype('=f4'),
-            alpha=alpha.astype('=f4'))
-
-    return ncen, nsat
-
-cdef _mkn(
+cdef _mkn_lognorm(
         const float [:] mfof,
-        const float [:] mcut,
+        const float [:] mcen,
         const float [:] sigma,
-        const float [:] m1,
-        const float [:] kappa,
-        const float [:] alpha,
 ):
 
     cdef int igrp
 
     cdef float [:] ncen
-    cdef float [:] nsat
 
     ncen = numpy.zeros(mfof.shape[0], dtype='f4')
-    nsat = numpy.zeros(mfof.shape[0], dtype='f4')
+
+    cdef float mass, logm, mu
+
+    with nogil:
+        for igrp in range(0, mfof.shape[0]):
+            mass = mfof[igrp]
+            # watch out: literature may use log10 here which
+            # means a different sigma definition!
+            logm = log(mass / mcen[igrp]) 
+
+            if logm > - 5 * sigma[igrp]:
+                mu = exp(-0.5 * (logm / sigma[igrp]) **2)
+                ncen[igrp] = mu
+
+    return numpy.array(ncen)
+
+def mkn_soft_logstep(mfof, mcut, sigma):
+    """
+    Compute the expected number of galaxies from soft_logstep.
+
+    The log transformation uses ln, not lg for transformation.
+
+    The second equal sign converts to the form used in
+    arxiv: 1212.4526 (eq 8, eq 9)
+
+    .. math ::
+
+        N_\mathrm{cen} = 0.5 ( 1 +
+                    erf(\frac{ln M - ln M_{cut}}{\sqrt{2} \sigma})
+                    )
+
+                    = 0.5 ( 1 + 
+                    erf(\frac{log M - log M_{cut}}{0.614 \sigma})
+                    )
+
+    """
+    mfof, mcut, sigma = numpy.broadcast_arrays(
+            mfof, mcut, sigma)
+
+    return _mkn_soft_logstep(mfof=mfof.astype('=f4'),
+                   mcut=mcut.astype('=f4'),
+                   sigma=sigma.astype('=f4'))
+
+cdef _mkn_soft_logstep(
+        const float [:] mfof,
+        const float [:] mcut,
+        const float [:] sigma,
+):
+
+    cdef int igrp
+
+    cdef float [:] ncen
+
+    ncen = numpy.zeros(mfof.shape[0], dtype='f4')
 
     cdef float mass, logm, mu
 
@@ -137,6 +160,8 @@ cdef _mkn(
         for igrp in range(0, mfof.shape[0]):
 
             mass = mfof[igrp]
+            # watch out: literature may use log10 here which
+            # means a different sigma definition!
             logm = log(mass / mcut[igrp]) 
 
             ncen[igrp] = 0
@@ -149,12 +174,100 @@ cdef _mkn(
                     mu = 0.5*(1+erf(logm/sqrt(2.0)/sigma[igrp]))
                     ncen[igrp] = mu
 
-            # sats for cen
-            if mass > kappa[igrp]*mcut[igrp]:
-                mu = ((mass-kappa[igrp]*mcut[igrp])/m1[igrp]) ** alpha[igrp]
+    return numpy.array(ncen)
+
+def mkn_hard_power(mfof, m0, m1, alpha):
+    r"""
+    Compute number of galaxies from a powerlaw with a sharp cut off
+
+    .. math ::
+
+        N_\mathrm{sat} = (\frac{M - M_{0}){M_1})^{\alpha}
+
+                       = exp(- \alpha \frac{M_{0}}{M})
+                           (\frac{M}{M_1})^\alpha
+
+    This is similiar to the powerlaw with a rolloff, as we see
+    in the second equal sign.
+    """
+
+    mfof, m0, m1, alpha = numpy.broadcast_arrays(
+            mfof, m0, m1, alpha)
+
+    return _mkn_hard_power(mfof=mfof.astype('=f4'),
+                   m0=m0.astype('=f4'),
+                   m1=m1.astype('=f4'),
+                   alpha=alpha.astype('=f4'),
+                )
+
+cdef _mkn_hard_power(
+        const float [:] mfof,
+        const float [:] m0,
+        const float [:] m1,
+        const float [:] alpha,
+):
+    cdef int igrp
+
+    cdef float [:] nsat
+
+    nsat = numpy.zeros(mfof.shape[0], dtype='f4')
+
+    cdef float mass, mu
+
+    with nogil:
+        for igrp in range(0, mfof.shape[0]):
+
+            mass = mfof[igrp]
+
+            # sats. similar to the exponential form,
+            # but with a sharp cut-off.
+            if mass > m0[igrp]:
+                mu = ((mass-m0[igrp])/m1[igrp]) ** alpha[igrp]
                 nsat[igrp] = mu
 
-    return numpy.array(ncen), numpy.array(nsat)
+    return numpy.array(nsat)
+
+def mkn_soft_power(mfof, m0, m1, alpha):
+    r"""
+    Compute number of galaxies from a powerlaw with a roll cut off
+
+    .. math ::
+
+        N_\mathrm{sat} = exp(- \frac{M_0}{M})
+                           (\frac{M}{M_1})^\alpha
+
+    """
+
+    mfof, m0, m1, alpha = numpy.broadcast_arrays(
+            mfof, m0, m1, alpha)
+
+    return _mkn_soft_power(mfof=mfof.astype('=f4'),
+                   m0=m0.astype('=f4'),
+                   m1=m1.astype('=f4'),
+                   alpha=alpha.astype('=f4'),
+                )
+
+cdef _mkn_soft_power(
+        const float [:] mfof,
+        const float [:] m0,
+        const float [:] m1,
+        const float [:] alpha,
+):
+    cdef int igrp
+
+    cdef float [:] nsat
+
+    nsat = numpy.zeros(mfof.shape[0], dtype='f4')
+
+    cdef float mass, mu
+
+    with nogil:
+        for igrp in range(0, mfof.shape[0]):
+            mass = mfof[igrp]
+            mu = exp(- m0[igrp] / mass) * (mass / m1[igrp]) ** alpha[igrp]
+            nsat[igrp] = mu
+
+    return numpy.array(nsat)
 
 def mkcen(rng, ncen,
     pos, vel, vdisp,
@@ -168,7 +281,7 @@ def mkcen(rng, ncen,
     may change as this code evolves
 
     vdisp is the DM velocity dispersion of the halo.
-    
+
     vcen is the fraction of velocity relative to the dispersion.
 
     If input data is already halo properties per central, pass
@@ -182,7 +295,7 @@ def mkcen(rng, ncen,
     vcen = numpy.broadcast_to(vcen, ncen.shape)
     vdisp = numpy.broadcast_to(vdisp, ncen.shape)
     
-    rnga = RNGAdapter(rng, min(len(ncen), 1024 * 8))
+    rnga = RNGAdapter(rng, min(len(ncen), 1024 * 1024))
 
     return _mkcen(rnga,
                 ncen=ncen.astype('=i4'),
@@ -261,7 +374,7 @@ def mksat(rng,
     if not isinstance(rng, RandomState):
         rng = RandomState(rng)
 
-    rnga = RNGAdapter(rng, min(len(nsat), 1024 * 8))
+    rnga = RNGAdapter(rng, min(len(nsat), 1024 * 1024))
     vsat = numpy.broadcast_to(vsat, nsat.shape)
     vdisp = numpy.broadcast_to(vdisp, nsat.shape)
     conc = numpy.broadcast_to(conc, nsat.shape)
@@ -388,3 +501,82 @@ cdef class RNGAdapter:
 
 cdef float nfw(float x) nogil:
     return x/((1+x) *(1+x))
+
+def hod(rng, mfof,
+    pos=None, vel=None, conc=None, rvir=None, vdisp=None,
+    mcut=10**13.35, sigma=0.25, m1=10**12.80, kappa=1.0,
+    alpha=0.8, vcen=0.0, vsat=0.5
+    ):
+    """
+    Apply vanilla HOD to a halo catalog.
+
+    This uses mkn_soft_logstep for centrals, and
+    mkn_hard_power for satellites.
+
+    For more flexible models, use the verbose version of API
+
+    rng is a random seed or a RandomState object.
+    Do not reuse the rng, as the number of draws from the rng
+    may change as this code evolves
+
+    pos, vel shall have the same length as mfof.
+
+    Every other variable is broadcast against mfof.
+
+    if pos is None, only return (ncen, nsat) integer number of objects
+    for centrals and satellites.
+
+    """ 
+    if not isinstance(rng, RandomState):
+        rng = RandomState(rng)
+
+    seed1, seed2, seed3 = rng.randint(0x7fffffff, size=3)
+
+    ncen = mkn_soft_logstep(
+            mfof=mfof,
+            mcut=mcut, sigma=sigma)
+
+    nsat = mkn_hard_power(
+            mfof=mfof,
+            m0=mcut * kappa, m1=m1,
+            alpha=alpha)
+
+    ncen, nsat = mknint(RandomState(seed1), ncen, nsat)
+
+    if pos is None:
+        return ncen, nsat
+    else:
+        cpos, cvel = mkcen(RandomState(seed2), ncen,
+            pos, vel, vdisp, vcen=vcen)
+
+        spos, svel = mksat(RandomState(seed3), nsat,
+            pos, vel, vdisp, conc, rvir, vsat=vsat)
+
+        return (ncen, cpos, cvel), (nsat, spos, svel)
+
+
+
+# Deprecated functions
+def mkhodp_linear(afof, apiv, hod_dMda, mcut_apiv, m1_apiv):
+    import warnings
+    warnings.warn("Use mkhodp instead of this function.", DeprecationWarning, stacklevel=2)
+    return mkhodp(afof, apiv, hod_dMda, mcut_apiv, m1_apiv)
+
+def mkn(mfof,
+    mcut=10**13.35, sigma=0.25, m1=10**12.8, kappa=1.0,
+    alpha=0.8):
+    r"""
+    This function is deprecataed. Use explict mkn_soft_logstep or mkn_hard_power instead.
+    """
+    import warnings
+    warnings.warn("Use mkn_soft_logstep and mkn_hard_power instead.", DeprecationWarning, stacklevel=2)
+
+    ncen = mkn_soft_logstep(mfof=mfof, mcut=mcut, sigma=sigma)
+
+    nsat = mkn_hard_power(mfof=mfof,
+            m0=mcut * kappa,
+            m1=m1,
+            alpha=alpha)
+
+    return ncen, nsat
+
