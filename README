@@ -30,6 +30,7 @@ FAQ:
 - Q: What if I do not know the virial radius of halos?
 
   A: https://nbodykit.readthedocs.io/en/latest/api/_autosummary/nbodykit.transform.html#nbodykit.transform.HaloRadius
+     but note that function returns proper Mpc/h. So usually you want to modify this to comoving by divide by scaling factor.
 
 - Q: What if I do not know the velocity dispersion of halos?
 
