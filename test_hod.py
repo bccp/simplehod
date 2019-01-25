@@ -90,6 +90,6 @@ def test_nfw():
     assert(abs(numpy.std((pdftest - pdfexp) / pdfexp ** 0.5) - 1.0) < 0.05)
     
 if __name__ == '__main__':
-    #test_simplehod()
+    test_simplehod()
     #test_nfw()
     test_verbose()

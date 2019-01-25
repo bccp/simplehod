@@ -35,8 +35,9 @@ def mkhodp(afof, apiv, dlnM_da, *args):
 
     """
     dm = (afof - apiv) * dlnM_da # relative fraction.
-
     rt = [ mparam * (1 + dm) for mparam in args ]
+    if len(args) == 1:
+        return rt[0]
     return rt
 
 def mknint(rng, ncen, nsat):
