@@ -79,6 +79,7 @@ def _ELGHOD_5p(cat, mcut, sigma, m0, m1, alpha):
     return cat2
     
 def model(cat, HOD, logrp, params):
+    rmax = numpy.nanmax(10**logrp)
     lrg = HOD(cat, *params)
     if cat.comm.rank == 0:
         cat.logger.info("HOD produced %d galaxies" % lrg.csize)
@@ -91,7 +92,7 @@ def model(cat, HOD, logrp, params):
     if cat.comm.rank == 0:
         cat.logger.info("Sampled to %d galaxies" % lrg.csize)
 
-    edges = numpy.logspace(numpy.log10(0.5), numpy.log10(30), 20)
+    edges = numpy.logspace(numpy.log10(0.5), numpy.log10(rmax), 20)
     class TooFewObjects(BaseException): pass
 
     try:
