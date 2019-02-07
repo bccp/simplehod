@@ -12,15 +12,24 @@
 #  - shall write loss / ddof.
 #
 
-from nbodykit.lab import BigFileCatalog, SimulationBox2PCF, ArrayCatalog
+from nbodykit.lab import BigFileCatalog, SimulationBox2PCF, ArrayCatalog, RandomCatalog
 from nbodykit import cosmology, transform
 from nbodykit import setup_logging
+import dask.array as da
 import numpy
 
 setup_logging()
 
 from scipy.optimize import minimize
 import simplehod
+
+SEED = 34913 # used by all HOD models
+
+def stat(arr, comm):
+    csize = comm.allreduce(len(arr))
+    mean = comm.allreduce(arr.sum(dtype='f8')) / csize
+    std = abs(comm.allreduce((arr ** 2).sum(dtype='f8')) / csize - mean ** 2) ** 0.5
+    return mean, std
 
 def readcat(path, subsample=False):
     # Only used to compute concentration etc from halo mass
@@ -29,7 +38,7 @@ def readcat(path, subsample=False):
 
     cat = BigFileCatalog(path, dataset='LL-0.200')
     if subsample :
-        cat = cat[::subsample]
+        cat = cat[:subsample]
 
     M0 = cat.attrs['M0'] * 1e10
     if cat.comm.rank == 0:
@@ -41,11 +50,32 @@ def readcat(path, subsample=False):
     else:
         redshift = 1 / cat.attrs['Time'] - 1
     cat['conc'] = transform.HaloConcentration(cat['Mass'], CP, redshift).compute()
-    cat['rvir'] = transform.HaloRadius(cat['Mass'], CP, redshift).compute() / cat.attrs['Time']
+    # proper to comoving
+    cat['rvir'] = transform.HaloRadius(cat['Mass'], CP, redshift).compute() * (1 + redshift)
     cat['vdisp'] = transform.HaloVelocityDispersion(cat['Mass'], CP, redshift).compute()
 
     if 'Aemit' not in cat.columns:
         cat['Aemit'] = cat.attrs['Time'][0]
+
+    mean, std = stat(cat['Aemit'].compute(), cat.comm)
+    if cat.comm.rank == 0:
+        cat.logger.info("Aemit mean = %g std = %g" % (mean, std))
+
+    mean, std = stat(cat['Mass'].compute(), cat.comm)
+    if cat.comm.rank == 0:
+        cat.logger.info("mass mean, std = %g, %g" % (mean, std))
+
+    mean, std = stat(cat['conc'].compute(), cat.comm)
+    if cat.comm.rank == 0:
+        cat.logger.info("conc mean, std = %g, %g" % (mean, std))
+
+    mean, std = stat(cat['rvir'].compute(), cat.comm)
+    if cat.comm.rank == 0:
+        cat.logger.info("rvir mean, std = %g, %g" % (mean, std))
+
+    mean, std = stat(cat['vdisp'].compute(), cat.comm)
+    if cat.comm.rank == 0:
+        cat.logger.info("vdisp mean, std = %g, %g" % (mean, std))
 
     cat.attrs['BoxSize'] = numpy.ones(3) * cat.attrs['BoxSize'][0] 
     return cat
@@ -54,12 +84,16 @@ def _LRGHOD_5p(cat, mcut, sigma, m0, m1, alpha):
     ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
     nsat = simplehod.mkn_hard_power(cat['Mass'], m0, m1, alpha)
     cat1 = cat.copy()
-    ncen, nsat = simplehod.mknint(3333, ncen, nsat)
+    ncen, nsat = simplehod.mknint((SEED * 20 + 1) * cat.comm.size + cat.comm.rank, ncen, nsat)
 
     nsat = nsat * ncen
-    cpos, cvel = simplehod.mkcen(3444, ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
-    spos, svel = simplehod.mksat(3454, nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
+    cpos, cvel = simplehod.mkcen((SEED * 20 + 2) * cat.comm.size + cat.comm.rank, ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
+    spos, svel = simplehod.mksat((SEED * 20 + 3) * cat.comm.size + cat.comm.rank, nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
     aemit = cat1['Aemit'].compute()
+    if numpy.isinf(spos).any():
+        raise
+    if numpy.isinf(svel).any():
+        raise
     return numpy.append(cpos, spos, axis=0), numpy.append(cvel, svel, axis=0), \
             numpy.append(numpy.repeat(aemit, ncen), numpy.repeat(aemit, nsat), axis=0)
 
@@ -67,11 +101,11 @@ def _ELGHOD_5p(cat, mcut, sigma, m0, m1, alpha):
     ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
     nsat = simplehod.mkn_soft_power(cat['Mass'], m0, m1, alpha)
     cat1 = cat.copy()
-    ncen, nsat = simplehod.mknint(13333, ncen, nsat)
+    ncen, nsat = simplehod.mknint((SEED * 20 + 4) * cat.comm.size + cat.comm.rank, ncen, nsat)
 
     nsat = nsat * ncen
-    cpos, cvel = simplehod.mkcen(13444, ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
-    spos, svel = simplehod.mksat(13454, nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
+    cpos, cvel = simplehod.mkcen((SEED * 20 + 5) * cat.comm.size + cat.comm.rank, ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
+    spos, svel = simplehod.mksat((SEED * 20 + 6) * cat.comm.size + cat.comm.rank, nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
 
     aemit = cat1['Aemit'].compute()
     return numpy.append(cpos, spos, axis=0), numpy.append(cvel, svel, axis=0), \
@@ -85,9 +119,9 @@ def _QSOHOD_2p(cat, mcen, sigma):
     ncen = ncen * 0.1 # duty cycle max 0.1
  
     cat1 = cat.copy()
-    ncen, junk = simplehod.mknint(23333, ncen, None)
+    ncen, junk = simplehod.mknint((SEED * 20 + 7) * cat.comm.size + cat.comm.rank, ncen, None)
 
-    cpos, cvel = simplehod.mkcen(23444, ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
+    cpos, cvel = simplehod.mkcen((SEED * 20 + 8) * cat.comm.size + cat.comm.rank, ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
 
     aemit = cat1['Aemit'].compute()
     return cpos, cvel, numpy.repeat(aemit, ncen)
@@ -161,15 +195,13 @@ def fit_wp(cat, pimax, logrp, logwp, HOD, x0, callback):
 
 def save_cat(filename, dataset, cat, HOD, x):
     gal = HOD(cat, *x)
-    
+    gal.attrs['BoxSize'] = cat.attrs['BoxSize']
+
     if cat.comm.rank == 0:
         cat.logger.info("HOD produced %d galaxies" % gal.csize)
         cat.logger.info("Attrs: %s" % str(gal.attrs))
         cat.logger.info("writing to %s %s" % (filename, dataset))
 
-    gal.attrs['BoxSize'] = cat.attrs['BoxSize']
-    if 'RSDFactor' in cat.attrs:
-        gal.attrs['RSDFactor'] = cat.attrs['RSDFactor']
     gal.save(filename, dataset=dataset, header=dataset)
 
 def save_model(filename, cat, pimax, logrp, logwp, HOD, x, i):
@@ -321,6 +353,7 @@ MODELS = ['LRGHOD_5p', 'LRGHOD_3p', 'ELGHOD_5p', 'ELGHOD_3p', 'QSOHOD_1p', 'QSOH
 import argparse
 
 ap = argparse.ArgumentParser()
+ap.add_argument('--seed', type=int, default=3333)
 sp = ap.add_subparsers(dest='command')
 
 ap1 = sp.add_parser("fit")
@@ -426,6 +459,7 @@ def fit_hodfit(a_list, param_list, title_list, loss_list):
 
 ap1 = sp.add_parser("apply")
 ap1.add_argument("model", choices=MODELS , help='type of model')
+ap1.add_argument("--subsample", type=int, default=None, help='type of model')
 ap1.add_argument("output", help='filename to store the result, BigFileCatalog is written')
 ap1.add_argument("--dataset", help='dataest to store the result, default is the model name', default=None, )
 ap1.add_argument("bestfits", help='filename pattern to store the best fit parameters. Quote this argument!')
@@ -434,10 +468,11 @@ ap1.add_argument("fastpm", help='path to the fastpm halo catalog')
 def apply(ns):
     # get the model. If wrong check if the function is defined.
     HOD = globals()[ns.model]
+
     if ns.dataset is None:
         ns.dataset = ns.model
 
-    cat = readcat(ns.fastpm)
+    cat = readcat(ns.fastpm, ns.subsample)
     a, param, title, loss = read_hod_fits(ns.bestfits)
     p_list = fit_hodfit(a, param, title, loss)
 
@@ -445,141 +480,249 @@ def apply(ns):
 
     # generate HOD parameters for each object
     params = []
-    aemit_mean = cat.comm.allreduce(aemit.sum(dtype='f8')) / cat.csize
-    aemit_std = abs(cat.comm.allreduce((aemit ** 2).sum(dtype='f8')) / cat.csize - aemit_mean ** 2) ** 0.5
-
-    if cat.comm.rank == 0:
-        cat.logger.info("Aemit mean = %g std = %g" % (aemit_mean, aemit_std))
 
     for i, p in enumerate(p_list):
         p1 = numpy.polyval(p, aemit - 0.6667)
-        p1_mean = cat.comm.allreduce(p1.sum(dtype='f8')) / cat.csize
-        p1_std = abs(cat.comm.allreduce((p1 ** 2).sum(dtype='f8')) / cat.csize - p1_mean ** 2) ** 0.5
+        mean, std = stat(p1, cat.comm)
 
         if cat.comm.rank == 0:
-            cat.logger.info("%s mean = %g std = %g" % (title[i], p1_mean, p1_std))
+            cat.logger.info("%s mean = %g std = %g" % (title[i], mean, std))
         params.append(p1)
 
     save_cat(ns.output, ns.dataset, cat, HOD, params)
 
 ap1 = sp.add_parser("mock")
+ap1.add_argument("simcov", choices=['NGP', 'FULL'], help='Sky coverage of the SIMulation. NGP: covering NGP; FULL: covering full sky. Mock will cover full sky.')
 ap1.add_argument("output", help='filename to store the result, BigFileCatalog is written')
 ap1.add_argument("odataset", help='dataest to store the result, default is the model name', default=None, )
 ap1.add_argument("input", help='dataest to read the result, default is the model name', default=None, )
 ap1.add_argument("--idataset", help='dataest to read the result, default is the same as the output dataset', default=None, )
 ap1.add_argument("nz", help='filename store N ~ Z , format z_low z_high N')
 ap1.add_argument("--ncol", type=int, default=2, help='column id of N')
-ap1.add_argument("--fsky", type=float, default=0.5, help='fraction of sky of the simulation')
 
 def mock(ns):
     if ns.idataset is None:
         ns.idataset = ns.odataset
     cat = BigFileCatalog(ns.input, dataset=ns.idataset)
-    
-    redshift = (1 / cat['Aemit'] - 1)
-    import dask.array as da
-    zmin, zmax = da.compute(redshift.min(), redshift.max())
+
+    if ns.simcov == 'NGP':
+        fsky = 0.5
+    elif ns.simcov == 'FULL':
+        fsky = 1.0
+    else:
+        raise
+
+    cat['ZREAL'] = (1 / cat['Aemit'] - 1)
+
+    def compute_va(vel, pos):
+        u = pos / (pos **2).sum(axis=-1)[:, None] ** 0.5
+        return numpy.einsum('ij,ij->i', vel, u)
+
+    VZ = da.apply_gufunc(compute_va, '(3),(3)->()', cat['Velocity'], cat['Position'])
+
+    C = 299792458. / 1000
+    cat['Z'] = (1 + cat['ZREAL']) * (1 + VZ / C) - 1
+
+    zmin, zmax = da.compute(cat['Z'].min(), cat['Z'].max())
  
     zmax = max(cat.comm.allgather(zmax))
     zmin = min(cat.comm.allgather(zmin))
 
-    zedges, Ntarget = read_Nz(ns.nz, ns.ncol, zmin, zmax)
+    dNdZ = read_Nz(ns.nz, ns.ncol, zmin, zmax)
 
-    spl = fit_Nz(cat, Ntarget, zedges, 0.5)
-    ntarget = 10 ** spl(redshift.compute())
-    ntarget = ntarget.clip(0, 1)
-    ntarget[redshift < zedges[0]] = 0
-    ntarget[redshift > zedges[-1]] = 0
+    zedges = numpy.linspace(zmin, zmax, 128)
+    zcenters = 0.5 * (zedges[:-1] + zedges[1:])
+
+    dNdZ1 = fit_dNdZ(cat, zedges, fsky)
+
+    Z = cat['Z'].compute()
+    ntarget = dNdZ(Z)  / dNdZ1(Z) 
     
-    rng = numpy.random.RandomState(4123943)
+    ntarget[numpy.isnan(ntarget)] = 0
+    #ntarget = ntarget.clip(0, 10)
 
-    itargets = rng.poisson(ntarget)
+    rng = numpy.random.RandomState((SEED * 20 + 11) * cat.comm.size + cat.comm.rank)
 
-    cat1 = ArrayCatalog({
-            'Position' : cat['Position'].compute().repeat(itargets, axis=0),
-            'Velocity' : cat['Velocity'].compute().repeat(itargets, axis=0),
-            'Aemit' : cat['Aemit'].compute().repeat(itargets, axis=0),
-            }, comm=cat.comm)
+    if all(cat.comm.allgather((ntarget < 1.0).all())):
+        ntarget = rng.binomial(1, ntarget)
+    else:
+        ntarget = rng.poisson(ntarget)
+        if cat.comm.rank == 0:
+            cat.logger.info("Up-sampling with poisson because number density is too low")
+
+    pos = cat['Position'].compute().repeat(ntarget, axis=0)
+    redshift = cat['Z'].compute().repeat(ntarget, axis=0)
+    aemit = cat['Aemit'].compute().repeat(ntarget, axis=0)
+    ra, dec = transform.CartesianToEquatorial(pos, frame='galactic')
+
+    if ns.simcov == 'NGP':
+        if cat.comm.rank == 0:
+            cat.logger.info("Patching the half sky simulation into full sky by flipping z axis")
+
+        ra2, dec2 = transform.CartesianToEquatorial(pos * [1, 1, -1], frame='galactic')
+
+        cat1 = ArrayCatalog({
+                'RA' : numpy.concatenate([ra, ra2], axis=0),
+                'DEC' : numpy.concatenate([dec, dec2], axis=0),
+                'Aemit' : numpy.concatenate([aemit, aemit], axis=0),
+                'Z' : numpy.concatenate([redshift, redshift], axis=0),
+                }, comm=cat.comm)
+    elif ns.simcov == 'FULL':
+        cat1 = ArrayCatalog({
+                'RA' : ra,
+                'DEC' : dec,
+                'Aemit' : aemit,
+                'Z' : redshift,
+                }, comm=cat.comm)
 
     cat1.save(ns.output, dataset=ns.odataset)
 
 def read_Nz(filename, col, zmin, zmax):
     # use col as the N column
-    from scipy.interpolate import InterpolatedUnivariateSpline
     zlow, zhigh, N = numpy.loadtxt(filename, unpack=True, usecols=(0, 1, col))
-    mask = (zlow > zmin) & (zlow < zmax)
-    mask &= (zhigh > zmin) & (zhigh < zmax)
-    mask &= N > 0
+    mask = (zlow >= zmin) & (zlow <= zmax)
+    mask &= (zhigh >= zmin) & (zhigh <= zmax)
+
+    assert (zlow[1:] == zhigh[:-1]).all()
     zlow = zlow[mask]
     zhigh = zhigh[mask]
-    N = N[mask]
-    assert (zlow[1:] == zhigh[:-1]).all()
-    zedges = numpy.concatenate([zlow[:1], zhigh])
-    return zedges, N * 41253
+    N = N[mask] * 41253
 
-def fit_Nz(cat, Ndest, zedges, fsky):
-    from scipy.interpolate import BSpline, make_interp_spline, make_lsq_spline
-    redshift = (1 / cat['Aemit'] - 1).compute()
-    every = int(cat.csize // 10000000)
-    if every < 1: every = 1
+    zedges = numpy.concatenate((zlow[:1], zhigh))
+    dNdZ = N / numpy.diff(zedges)
+    dNdZ[dNdZ <= 0] = 1e-10
+    zcenter = (zlow + zhigh) * 0.5
+    zcenter = numpy.concatenate([[zmin], zcenter, [zmax]], axis=0)
 
-    mask = redshift >= zedges[0]
-    mask &= redshift <= zedges[-1]
-    redshift = redshift[mask]
-    ss = redshift[::every]
+    dNdZ = numpy.concatenate([[1e-10], dNdZ, [1e-10]], axis=0)
 
-    h, junk = numpy.histogram(redshift, bins=zedges)
-    h = h / fsky
+    spl = behavedspline(zcenter, dNdZ)
+
+    return spl
+
+def behavedspline(x, y):
+    from scipy.interpolate import UnivariateSpline
+    from scipy.interpolate import InterpolatedUnivariateSpline
+    y = y.copy()
+    y[y<=0] = 1e-10
+    spl = UnivariateSpline(x, y, ext='const', k=1, s=len(y) * 10)
+    xmin = numpy.min(x) 
+    xmax = numpy.max(x) 
+    def func(x):
+        r = spl(x).copy()
+        mask = x < xmin
+        mask |= x > xmax
+        r[r<0] = 0
+        r[mask] = numpy.nan
+        return r
+    return func
+
+def fit_dNdZ(cat, zedges, fsky):
+
+    Z = cat['Z'].compute()
+
+    h, bins = numpy.histogram(Z, zedges)
     h = cat.comm.allreduce(h)
-    h = h.clip(1e-10)
-    w0 = (Ndest / h).clip(1e-10)
     zcenter = 0.5 * (zedges[1:] + zedges[:-1])
-#    t = numpy.linspace(zcenter[0], zcenter[-1], 5, endpoint=True)
-    init = make_interp_spline(zcenter, numpy.log10(w0), k=1) #, bc_type='natural')
-    x0 = init.c
+    h = h / numpy.diff(zedges) / fsky
+
+    dNdZ1 = behavedspline(zcenter, h)
+
+    return dNdZ1
+
+
+ap1 = sp.add_parser("randoms")
+ap1.add_argument("output", help='filename to store the result, BigFileCatalog is written')
+ap1.add_argument("odataset", help='dataest to store the result, default is the model name', default=None, )
+ap1.add_argument("nz", help='filename store N ~ Z , format z_low z_high N')
+ap1.add_argument("--zmax", type=float, default=2.2, help='max redshift to go')
+ap1.add_argument("--ncol", type=int, default=2, help='column id of N')
+ap1.add_argument("--boost", type=float, default=5, help='boost number density by this factor ')
+
+def geticdf(spl, points):
+    vals = spl(points)
+    # use middle point
+    vals = (vals[1:] + vals[:-1]) * 0.5
+    vals[vals<0] = 0
+    
+    cdf = numpy.cumsum(vals * numpy.diff(points))
+    N = cdf[-1]
+    cdf /= cdf[-1]
+    
+    u, ind = numpy.unique(cdf, return_index=True)
+    cdf = cdf[ind]
+    points = points[ind]
+    def interp(x):
+        return numpy.interp(x, cdf, points)
+
+    return interp, N
+
+def randoms(ns):
+    zmin = 0
+    zmax = ns.zmax
+
+    dNdZ = read_Nz(ns.nz, ns.ncol, zmin, zmax)
+
+    zedges = numpy.linspace(zmin, zmax, 12)
+    zcenters = 0.5 * (zedges[1:] + zedges[:-1])
+
+    dNdZ_ran = lambda z : dNdZ(z) * ns.boost
+    
+    icdf, Ntotal = geticdf(dNdZ_ran, numpy.linspace(zmin, zmax, 1024))
+
+    # drop about 20% of samples to give it enough freedom.
+    cat = RandomCatalog(
+            csize=int(Ntotal),
+            seed=SEED * 20 + 19)
 
     if cat.comm.rank == 0:
-        cat.logger.info("Nparameters = %g", len(x0))
-        cat.logger.info("parameters = %s" % (x0, ))
+        cat.logger.info("Total = %d" % Ntotal)
 
-    def model(params):
-        # use a small subsample for estimation.
-        spl = BSpline(init.t, params, k=init.k)
-        weights = 10 ** spl(ss)
-        weights[ss < zedges[0]] = 0
-        weights[ss > zedges[-1]] = 0
-        weights = weights.clip(0, 1)
-        h, junk = numpy.histogram(ss, bins=zedges, weights=weights)
-        if len(ss) > 0:
-            h = h / fsky * len(redshift) / len(ss)
-            # otherwise h is 0 everywhere, outside redshift range!
-        h = cat.comm.allreduce(h)
-        return h
+    # generate points uniformly on a sphere.
+    # FIXME: add uniform sphere to nbodykit's RandomCatalog
+    z = cat.rng.uniform(-1., 1.)
+    r = abs(1 - z ** 2) ** 0.5
+    phi = cat.rng.uniform(0, 2 * numpy.pi) 
 
-    def loss(N):
-        sigma = Ndest ** 0.5
-        sigma[sigma == 0] = 1
-        return (((N - Ndest) / sigma) ** 2).mean()
+    x = da.cos(phi) * r
+    y = da.sin(phi) * r
+    z = z
+    
+    ra, dec = transform.CartesianToEquatorial(da.stack((x,  y, z), axis=1), frame='galactic')
+    
+    z = icdf(cat.rng.uniform(0, 1) )
 
-    def callback(params):
-        N = model(params)
-        l = loss(N)
-        if cat.comm.rank == 0:
-            cat.logger.info('fitting loss=%s' % (l))
-            for i in range(len(zedges) - 1):
-                cat.logger.info("%g %g %g %g" % (zedges[i], zedges[i+1], N[i], Ndest[i]))
+    cat['RA'] = ra.compute()
+    cat['DEC'] = dec.compute()
+    cat['Z'] = z
+    cat['Aemit'] = (1 / (z + 1))
 
-    r = minimize(lambda x0:loss(model(x0)), method='BFGS', x0=x0, callback=callback, tol=1., options={'gtol':1e-3})
-    return BSpline(init.t, r.x, k=init.k)
+    ntarget = numpy.ones_like(z, dtype='i4')
+
+    randoms = ArrayCatalog({
+            'RA' : cat['RA'].compute().repeat(ntarget, axis=0),
+            'DEC' : cat['DEC'].compute().repeat(ntarget, axis=0),
+            'Z' : cat['Z'].compute().repeat(ntarget, axis=0),
+            'Aemit' : cat['Aemit'].compute().repeat(ntarget, axis=0),
+            }, comm=cat.comm)
+    randoms = randoms.sort(('Aemit',), usecols=['RA', 'DEC', 'Z', 'Aemit'])
+
+    randoms.save(ns.output, dataset=ns.odataset)
+
 
 def main():
     ns = ap.parse_args()
+    global SEED
+    SEED = ns.seed
+
     if ns.command == 'fit':
         fit(ns)
     if ns.command == 'apply':
         apply(ns)
     if ns.command == 'mock':
         mock(ns)
+    if ns.command == 'randoms':
+        randoms(ns)
 
 if __name__ == '__main__':
     main()
