@@ -1,3 +1,37 @@
+"""
+wlen.py
+
+Produce weak lensing kappa maps.
+
+Input  : FastPM lightcone particle catalog
+Output : kappa weak lensing maps.
+
+We read in the lightcone slice by slice, and accumulate the weak lensing
+kappa map for each source redshift per slice. Most of the code here
+is dealing with data IO and parallism.
+
+The only scientifically significant function is wlen()
+adapted from Sukhdeep Singh's wlen notebook,
+and verified against Sukhdeep's integrated kappa CL from static redshift power
+spectrum reported by the simulations.
+(Up to some fiddling with modes beyond P(k) resolution.)
+
+Yu Feng (yfeng1@berkeley.edu)
+
+TODO: Currently the sky geometry is hardcoded to paste the simulation
+with it's z direction image. This is only applicable to CrowCanyon lightcones
+which covers only the positive z direction. For other simulations
+the code needs to be modified.
+The xy plane is set to the galactic plane; such that any anomaly due to this pasting
+is obscured by the galaxy.
+
+FIXME: the conversion between redshift of source plane and comoving distance of
+source plane uses a hardcoded Planck15 cosmology. Since we never talk about redshift
+in an accurate way for wlen, this is probably OK for now. 
+
+
+"""
+
 import nbodykit
 from nbodykit.lab import BigFileCatalog
 from nbodykit.transform import ConcatenateSources, CartesianToEquatorial
@@ -16,7 +50,7 @@ from nbodykit.utils import DistributedArray, GatherArray
 
 import dask.array as da
 
-# formula
+# formula (from Sukhdeep Singh)
 
 # int dss  Ps(zs) [ int dxl omega_m / sigma(zs, zl) delta_m(t, zl)]
 
@@ -34,7 +68,8 @@ import dask.array as da
 # = 1 / nbar sum X(xl_i) / A(xl_i) - Const.
 
 # A is the area , so size of healpix * xl_i ** 2
-# const can be removed by demanding kappa has a mean of zero in the observed region.
+# const can be computed, and it shall set the mean of kappa to zero.
+# We report the const (kappabar) and the summation seperately (kappa)
 
 def inv_sigma(ds, dl, zl):
     ddls = 1 - numpy.multiply.outer(1 / ds, dl)
@@ -125,6 +160,13 @@ def weighted_map(ipix, npix, weights, localsize, comm):
 
 
 def read_range(cat, amin, amax):
+    """ Read a portion of the lightcone between two red shift ranges
+
+        The lightcone from FastPM is sorted in Aemit and an index is built.
+        So we make use of that.
+
+        CrowCanyon is z > 0; We paste the mirror image to form a full sky.
+    """
     edges = cat.attrs['aemitIndex.edges']
     offsets = cat.attrs['aemitIndex.offset']
     start, end = edges.searchsorted([amin, amax])
@@ -146,8 +188,10 @@ def read_range(cat, amin, amax):
 def make_kappa_maps(cat, nside, zs_list, ds_list, localsize, nbar):
     """ Make kappa maps at a list of ds
 
-        Return kappa, Nm in shape of (n_ds, npix), kappabar in shape of (n_ds,)
+        Return kappa, Nm in shape of (n_ds, localsize), kappabar in shape of (n_ds,)
 
+        The maps are distributed in memory, and localsize is the size of
+        map on this rank.
     """
 
     dl = (abs(cat['Position'] **2).sum(axis=-1)) ** 0.5
@@ -202,6 +246,9 @@ def make_kappa_maps(cat, nside, zs_list, ds_list, localsize, nbar):
         
         kappa1 = Wmap
         if every == 0: every = 1
+
+        # use GatherArray, because it is faster than comm.gather at this scale
+        # (> 4000 ranks on CrayMPI)
         ssdl = GatherArray(dl[::every].compute(), cat.comm)
         ssLensKernel = GatherArray(LensKernel[::every].compute(), cat.comm)
 
