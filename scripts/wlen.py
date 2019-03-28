@@ -372,7 +372,7 @@ def main(ns):
                     d.attrs['kappabar'] = kappabar[i]
                     d.attrs['nside'] = ns.nside
                     d.attrs['zlmin'] = zlmin
-                    d.attrs['zlmin'] = zlmax
+                    d.attrs['zlmax'] = zlmax
                     d.attrs['zs'] = zs
                     d.attrs['ds'] = ds
                     d.attrs['nbar'] = nbar
