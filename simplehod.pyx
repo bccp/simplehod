@@ -85,9 +85,11 @@ def mkn_lognorm(mfof, mcen, sigma):
     mfof, mcen, sigma = numpy.broadcast_arrays(
             mfof, mcen, sigma)
 
-    return _mkn_lognorm(mfof=mfof.astype('=f4'),
-                   mcen=mcen.astype('=f4'),
-                   sigma=sigma.astype('=f4'))
+    return _mkn_lognorm(
+            mfof=numpy.array(mfof.astype('=f4')),
+            mcen=numpy.array(mcen.astype('=f4')),
+            sigma=numpy.array(sigma.astype('=f4')),
+           )
 
 cdef _mkn_lognorm(
         const float [:] mfof,
@@ -139,9 +141,11 @@ def mkn_soft_logstep(mfof, mcut, sigma):
     mfof, mcut, sigma = numpy.broadcast_arrays(
             mfof, mcut, sigma)
 
-    return _mkn_soft_logstep(mfof=mfof.astype('=f4'),
-                   mcut=mcut.astype('=f4'),
-                   sigma=sigma.astype('=f4'))
+    return _mkn_soft_logstep(
+            mfof=numpy.array(mfof.astype('=f4')),
+            mcut=numpy.array(mcut.astype('=f4')),
+            sigma=numpy.array(sigma.astype('=f4')),
+           )
 
 cdef _mkn_soft_logstep(
         const float [:] mfof,
@@ -195,11 +199,12 @@ def mkn_hard_power(mfof, m0, m1, alpha):
     mfof, m0, m1, alpha = numpy.broadcast_arrays(
             mfof, m0, m1, alpha)
 
-    return _mkn_hard_power(mfof=mfof.astype('=f4'),
-                   m0=m0.astype('=f4'),
-                   m1=m1.astype('=f4'),
-                   alpha=alpha.astype('=f4'),
-                )
+    return _mkn_hard_power(
+            mfof=numpy.array(mfof.astype('=f4')),
+            m0=numpy.array(m0.astype('=f4')),
+            m1=numpy.array(m1.astype('=f4')),
+            alpha=numpy.array(alpha.astype('=f4')),
+           )
 
 cdef _mkn_hard_power(
         const float [:] mfof,
@@ -242,11 +247,12 @@ def mkn_soft_power(mfof, m0, m1, alpha):
     mfof, m0, m1, alpha = numpy.broadcast_arrays(
             mfof, m0, m1, alpha)
 
-    return _mkn_soft_power(mfof=mfof.astype('=f4'),
-                   m0=m0.astype('=f4'),
-                   m1=m1.astype('=f4'),
-                   alpha=alpha.astype('=f4'),
-                )
+    return _mkn_soft_power(
+            mfof=numpy.array(mfof.astype('=f4')),
+            m0=numpy.array(m0.astype('=f4')),
+            m1=numpy.array(m1.astype('=f4')),
+            alpha=numpy.array(alpha.astype('=f4')),
+           )
 
 cdef _mkn_soft_power(
         const float [:] mfof,
@@ -299,11 +305,12 @@ def mkcen(rng, ncen,
     rnga = RNGAdapter(rng, min(len(ncen), 1024 * 1024))
 
     return _mkcen(rnga,
-                ncen=ncen.astype('=i4'),
-                pos=pos.astype('=f4'),
-                vel=vel.astype('=f4'),
-                vdisp=vdisp.astype('=f4'),
-                vcen=vcen.astype('=f4'))
+            ncen=numpy.array(ncen.astype('=i4')),
+            pos=numpy.array(pos.astype('=f4')),
+            vel=numpy.array(vel.astype('=f4')),
+            vdisp=numpy.array(vdisp.astype('=f4')),
+            vcen=numpy.array(vcen.astype('=f4')),
+           )
 
 cdef _mkcen(
         RNGAdapter rnga,
