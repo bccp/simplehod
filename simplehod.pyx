@@ -83,12 +83,15 @@ def mkn_lognorm(mfof, mcen, sigma):
 
     """
     mfof, mcen, sigma = numpy.broadcast_arrays(
-            mfof, mcen, sigma)
+            numpy.array(mfof),
+            numpy.array(mcen),
+            numpy.array(sigma),
+            )
 
     return _mkn_lognorm(
-            mfof=numpy.array(mfof.astype('=f4')),
-            mcen=numpy.array(mcen.astype('=f4')),
-            sigma=numpy.array(sigma.astype('=f4')),
+            mfof=mfof.astype('=f4'),
+            mcen=mcen.astype('=f4'),
+            sigma=sigma.astype('=f4'),
            )
 
 cdef _mkn_lognorm(
@@ -139,12 +142,15 @@ def mkn_soft_logstep(mfof, mcut, sigma):
 
     """
     mfof, mcut, sigma = numpy.broadcast_arrays(
-            mfof, mcut, sigma)
+            numpy.array(mfof),
+            numpy.array(mcut),
+            numpy.array(sigma),
+            )
 
     return _mkn_soft_logstep(
-            mfof=numpy.array(mfof.astype('=f4')),
-            mcut=numpy.array(mcut.astype('=f4')),
-            sigma=numpy.array(sigma.astype('=f4')),
+            mfof=mfof.astype('=f4'),
+            mcut=mcut.astype('=f4'),
+            sigma=sigma.astype('=f4'),
            )
 
 cdef _mkn_soft_logstep(
@@ -197,13 +203,17 @@ def mkn_hard_power(mfof, m0, m1, alpha):
     """
 
     mfof, m0, m1, alpha = numpy.broadcast_arrays(
-            mfof, m0, m1, alpha)
+            numpy.array(mfof),
+            numpy.array(m0),
+            numpy.array(m1),
+            numpy.array(alpha),
+           )
 
     return _mkn_hard_power(
-            mfof=numpy.array(mfof.astype('=f4')),
-            m0=numpy.array(m0.astype('=f4')),
-            m1=numpy.array(m1.astype('=f4')),
-            alpha=numpy.array(alpha.astype('=f4')),
+            mfof=mfof.astype('=f4'),
+            m0=m0.astype('=f4'),
+            m1=m1.astype('=f4'),
+            alpha=alpha.astype('=f4'),
            )
 
 cdef _mkn_hard_power(
@@ -245,13 +255,17 @@ def mkn_soft_power(mfof, m0, m1, alpha):
     """
 
     mfof, m0, m1, alpha = numpy.broadcast_arrays(
-            mfof, m0, m1, alpha)
+            numpy.array(mfof),
+            numpy.array(m0),
+            numpy.array(m1),
+            numpy.array(alpha),
+            )
 
     return _mkn_soft_power(
-            mfof=numpy.array(mfof.astype('=f4')),
-            m0=numpy.array(m0.astype('=f4')),
-            m1=numpy.array(m1.astype('=f4')),
-            alpha=numpy.array(alpha.astype('=f4')),
+            mfof=mfof.astype('=f4'),
+            m0=m0.astype('=f4'),
+            m1=m1.astype('=f4'),
+            alpha=alpha.astype('=f4'),
            )
 
 cdef _mkn_soft_power(
