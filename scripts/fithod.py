@@ -80,15 +80,18 @@ def readcat(path, subsample=False):
     cat.attrs['BoxSize'] = numpy.ones(3) * cat.attrs['BoxSize'][0] 
     return cat
 
-def _LRGHOD_5p(cat, mcut, sigma, m0, m1, alpha):
+def mkseed(comm, *args):
+    return (SEED + hash(tuple(args)) % 314159) * comm.size + comm.rank
+
+def _LRGHOD_5p(cat, tag, mcut, sigma, m0, m1, alpha):
     ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
     nsat = simplehod.mkn_hard_power(cat['Mass'], m0, m1, alpha)
     cat1 = cat.copy()
-    ncen, nsat = simplehod.mknint((SEED * 20 + 1) * cat.comm.size + cat.comm.rank, ncen, nsat)
+    ncen, nsat = simplehod.mknint(mkseed(cat.comm, tag, "mkint"), ncen, nsat)
 
     nsat = nsat * ncen
-    cpos, cvel = simplehod.mkcen((SEED * 20 + 2) * cat.comm.size + cat.comm.rank, ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
-    spos, svel = simplehod.mksat((SEED * 20 + 3) * cat.comm.size + cat.comm.rank, nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
+    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
+    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
     aemit = cat1['Aemit'].compute()
     if numpy.isinf(spos).any():
         raise
@@ -97,34 +100,50 @@ def _LRGHOD_5p(cat, mcut, sigma, m0, m1, alpha):
     return numpy.append(cpos, spos, axis=0), numpy.append(cvel, svel, axis=0), \
             numpy.append(numpy.repeat(aemit, ncen), numpy.repeat(aemit, nsat), axis=0)
 
-def _ELGHOD_5p(cat, mcut, sigma, m0, m1, alpha):
+def _ELGHOD_5p(cat, tag, mcut, sigma, m0, m1, alpha):
     ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
     nsat = simplehod.mkn_soft_power(cat['Mass'], m0, m1, alpha)
     cat1 = cat.copy()
-    ncen, nsat = simplehod.mknint((SEED * 20 + 4) * cat.comm.size + cat.comm.rank, ncen, nsat)
+    ncen, nsat = simplehod.mknint(mkseed(cat.comm, tag, "mknint"), ncen, nsat)
 
     nsat = nsat * ncen
-    cpos, cvel = simplehod.mkcen((SEED * 20 + 5) * cat.comm.size + cat.comm.rank, ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
-    spos, svel = simplehod.mksat((SEED * 20 + 6) * cat.comm.size + cat.comm.rank, nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
+    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
+    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
 
     aemit = cat1['Aemit'].compute()
     return numpy.append(cpos, spos, axis=0), numpy.append(cvel, svel, axis=0), \
             numpy.append(numpy.repeat(aemit, ncen), numpy.repeat(aemit, nsat), axis=0)
 
 
+def _UNWISEHOD_5p(cat, tag, mcut, sigma, m0, m1, alpha):
+    """Only difference with LRGHOD is to set concentration to zero."""
+    ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
+    nsat = simplehod.mkn_soft_power(cat['Mass'], m0, m1, alpha)
+    cat1 = cat.copy()
+    ncen, nsat = simplehod.mknint(mkseed(cat.comm, tag, "mknint"), ncen, nsat)
 
-def _QSOHOD_2p(cat, mcen, sigma):
+    nsat = nsat * ncen
+    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
+    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), 0, cat['rvir'].compute())
+
+    aemit = cat1['Aemit'].compute()
+    return numpy.append(cpos, spos, axis=0), numpy.append(cvel, svel, axis=0), \
+            numpy.append(numpy.repeat(aemit, ncen), numpy.repeat(aemit, nsat), axis=0)
+    
+
+def _QSOHOD_2p(cat, tag, mcen, sigma):
     fcen = 3. # good reason to expect due to lack of kink
     ncen = fcen * simplehod.mkn_lognorm(cat['Mass'], mcen, sigma)
     ncen = ncen * 0.1 # duty cycle max 0.1
  
     cat1 = cat.copy()
-    ncen, junk = simplehod.mknint((SEED * 20 + 7) * cat.comm.size + cat.comm.rank, ncen, None)
+    ncen, junk = simplehod.mknint(mkseed(cat.comm, tag, "mknint"), ncen, None)
 
-    cpos, cvel = simplehod.mkcen((SEED * 20 + 8) * cat.comm.size + cat.comm.rank, ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
+    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
 
     aemit = cat1['Aemit'].compute()
     return cpos, cvel, numpy.repeat(aemit, ncen)
+
 
 def make_observation(mode, cat, HOD, logrp, params, pimax=None):
     rmax = numpy.nanmax(10**logrp)
@@ -252,7 +271,7 @@ def LRGHOD_5p(cat, logmcut, sigma, logm0, logm1, alpha):
     m0=10**logm0
     m1=10**logm1
     
-    pos, vel, aemit = _LRGHOD_5p(cat, mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
+    pos, vel, aemit = _LRGHOD_5p(cat, "LRGHOD_5p", mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
 
     cat2 = ArrayCatalog({
         'Position' : pos,
@@ -270,7 +289,7 @@ def LRGHOD_3p(cat, logmcut, logm0, logm1):
     m0=10**logm0
     m1=10**logm1
     
-    pos, vel, aemit = _LRGHOD_5p(cat, mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
+    pos, vel, aemit = _LRGHOD_5p(cat, "LRGHOD_3p", mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
     cat2 = ArrayCatalog({
         'Position' : pos,
         'Velocity' : vel,
@@ -280,6 +299,40 @@ def LRGHOD_3p(cat, logmcut, logm0, logm1):
     return cat2
 LRGHOD_3p.x0 = 13.05649281, 13.96182037,13.61134496 
 
+def ANY_UNWISEHOD_5p(cat, tag, logmcut, sigma, kappa, logm1, alpha):
+    """Martin White uses this model for Unwise."""
+    mcut=10**logmcut
+    sigma=sigma
+    alpha=alpha
+    m0=kappa * mcut
+    m1=10**logm1
+    
+    pos, vel, aemit = _UNWISEHOD_5p(cat, tag, mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
+
+    cat2 = ArrayCatalog({
+        'Position' : pos,
+        'Velocity' : vel,
+        'Aemit' : aemit,
+    }, comm = cat.comm)
+
+    return cat2
+
+def RED_UNWISEHOD_5p(cat, logmcut, sigma, kappa, logm1, alpha):
+    return ANY_UNWISEHOD_5p(cat, "RED_UNWISEHOD_5p", logmcut, sigma, kappa, logm1, alpha)
+# Some made up numbers
+RED_UNWISEHOD_5p.x0 = 11.6, 1.0, 0.1, 13.0, 0.7
+
+def BLUE_UNWISEHOD_5p(cat, logmcut, sigma, kappa, logm1, alpha):
+    return ANY_UNWISEHOD_5p(cat, "BLUE_UNWISEHOD_5p", logmcut, sigma, kappa, logm1, alpha)
+# Some made up numbers
+BLUE_UNWISEHOD_5p.x0 = 11.6, 1.0, 0.1, 13.0, 0.7
+
+def GREEN_UNWISEHOD_5p(cat, logmcut, sigma, kappa, logm1, alpha):
+    return ANY_UNWISEHOD_5p(cat, "GREEN_UNWISEHOD_5p", logmcut, sigma, kappa, logm1, alpha)
+# Some made up numbers
+GREEN_UNWISEHOD_5p.x0 = 11.6, 1.0, 0.1, 13.0, 0.7
+
+
 def ELGHOD_5p(cat, logmcut, sigma, logm0, logm1, alpha):
     mcut=10**logmcut
     sigma=sigma
@@ -287,7 +340,7 @@ def ELGHOD_5p(cat, logmcut, sigma, logm0, logm1, alpha):
     m0=10**logm0
     m1=10**logm1
     
-    pos, vel, aemit = _ELGHOD_5p(cat, mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
+    pos, vel, aemit = _ELGHOD_5p(cat, "ELGHOD_5p", mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
     cat2 = ArrayCatalog({
         'Position' : pos,
         'Velocity' : vel,
@@ -304,7 +357,7 @@ def ELGHOD_3p(cat, logmcut, logm0, logm1 ):
     m0=10**logm0
     m1=10**logm1
     
-    pos, vel, aemit = _ELGHOD_5p(cat, mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
+    pos, vel, aemit = _ELGHOD_5p(cat, "ELGHOD_3p", mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
     cat2 = ArrayCatalog({
         'Position' : pos,
         'Velocity' : vel,
@@ -321,7 +374,7 @@ def QSOHOD_1p(cat, logmcen):
     ncen = fcen * simplehod.mkn_lognorm(cat['Mass'], mcen, sigma)
     ncen = ncen * 0.1 # duty cycle max 0.1
  
-    pos, vel, aemit = _QSOHOD_2p(cat, mcen, sigma)
+    pos, vel, aemit = _QSOHOD_2p(cat, "QSOHOD_1p", mcen, sigma)
     cat2 = ArrayCatalog({
         'Position' : pos,
         'Velocity' : vel,
@@ -334,7 +387,7 @@ def QSOHOD_2p(cat, logmcen, sigma):
     mcen=10**logmcen
     sigma=sigma# * 2.303
  
-    pos, vel, aemit = _QSOHOD_2p(cat, mcen, sigma)
+    pos, vel, aemit = _QSOHOD_2p(cat, "QSOHOD_2p", mcen, sigma)
     cat2 = ArrayCatalog({
         'Position' : pos,
         'Velocity' : vel,
@@ -348,7 +401,11 @@ QSOHOD_2p.x0 = 12.0, 0.5
 # main program
 #
 # list all models defined about here as strings.
-MODELS = ['LRGHOD_5p', 'LRGHOD_3p', 'ELGHOD_5p', 'ELGHOD_3p', 'QSOHOD_1p', 'QSOHOD_2p']
+MODELS = ['LRGHOD_5p', 'LRGHOD_3p', 'ELGHOD_5p', 'ELGHOD_3p', 'QSOHOD_1p', 'QSOHOD_2p',
+          'RED_UNWISEHOD_5p',
+          'GREEN_UNWISEHOD_5p',
+          'BLUE_UNWISEHOD_5p',
+]
 
 import argparse
 
@@ -472,9 +529,10 @@ def apply(ns):
     if ns.dataset is None:
         ns.dataset = ns.model
 
-    cat = readcat(ns.fastpm, ns.subsample)
     a, param, title, loss = read_hod_fits(ns.bestfits)
     p_list = fit_hodfit(a, param, title, loss)
+
+    cat = readcat(ns.fastpm, ns.subsample)
 
     aemit = cat['Aemit'].compute()
 
