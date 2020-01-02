@@ -500,19 +500,21 @@ def read_hod_fits(pattern):
     return a_list, param_list, title_list, loss_list
 
 def fit_hodfit(a_list, param_list, title_list, loss_list):
-    plist = []
+    poly_list = []
     z_list = 1 / a_list - 1
+    fitted_param_list = []
     for i in range(len(title_list)):
         w = numpy.ones_like(a_list)
         w = 1 / loss_list # [loss_list < numpy.percentile(loss_list, 10.)] = 0
         
         if len(a_list) >= 2:
-            p = numpy.polyfit(a_list-0.6667, param_list[:, i], min(2, len(a_list)), w=w)
+            poly = numpy.polyfit(a_list-0.6667, param_list[:, i], min(2, len(a_list)), w=w)
         else:
-            p = param_list[:1, i]
-        p = p.round(2)
-        plist.append(p)
-    return numpy.array(plist)
+            poly = param_list[:1, i]
+        poly = poly.round(2)
+        fitted_param_list.append(numpy.polyval(poly, a_list-0.6667))
+        poly_list.append(poly)
+    return numpy.array(poly_list), numpy.array(fitted_param_list)
 
 ap1 = sp.add_parser("apply")
 ap1.add_argument("model", choices=MODELS , help='type of model')
@@ -530,7 +532,15 @@ def apply(ns):
         ns.dataset = ns.model
 
     a, param, title, loss = read_hod_fits(ns.bestfits)
-    p_list = fit_hodfit(a, param, title, loss)
+    poly_list, fitted_param_list = fit_hodfit(a, param, title, loss)
+
+    cat = BigFileCatalog(ns.fastpm, dataset='LL-0.200')
+    if cat.comm.rank == 0:
+        cat.logger.info("# %s", " ".join(title))
+        for i in range(len(a)):
+            cat.logger.info(
+                    "%05.2f " + " ".join(["%05.2f=%05.2f"] * len(title)),
+                   a[i], *sum([[param[i, j], fitted_param_list[j, i]] for j in range(len(title))], []))
 
     cat = readcat(ns.fastpm, ns.subsample)
 
@@ -539,8 +549,8 @@ def apply(ns):
     # generate HOD parameters for each object
     params = []
 
-    for i, p in enumerate(p_list):
-        p1 = numpy.polyval(p, aemit - 0.6667)
+    for i, poly in enumerate(poly_list):
+        p1 = numpy.polyval(poly, aemit - 0.6667)
         mean, std = stat(p1, cat.comm)
 
         if cat.comm.rank == 0:
