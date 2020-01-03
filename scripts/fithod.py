@@ -49,7 +49,7 @@ def readcat(path, subsample=False):
         redshift = 1 / cat['Aemit'] - 1
     else:
         redshift = 1 / cat.attrs['Time'] - 1
-    cat['conc'] = transform.HaloConcentration(cat['Mass'], CP, redshift).compute()
+    cat['conc'] = transform.HaloConcentration(cat['Mass'], CP, redshift).compute(scheduler="single-threaded")
     # proper to comoving
     cat['rvir'] = transform.HaloRadius(cat['Mass'], CP, redshift).compute() * (1 + redshift)
     cat['vdisp'] = transform.HaloVelocityDispersion(cat['Mass'], CP, redshift).compute()
@@ -83,16 +83,29 @@ def readcat(path, subsample=False):
 def mkseed(comm, *args):
     return (SEED + hash(tuple(args)) % 314159) * comm.size + comm.rank
 
+def make_balanced_catalog(cat, seed, ncen, nsat):
+    ncen, nsat = simplehod.mknint(seed, ncen, nsat)
+    if nsat is None:
+        nsat = 0
+    mask = ncen > 0
+    cat1 = cat.copy()
+    cat1['ncen'] = ncen
+    cat1['nsat'] = nsat
+    cat1 = cat1[ncen != 0]
+    # load balancing, but keep sorted by Aemit
+    cat1.sort(keys=['Aemit'], usecols=['ncen', 'nsat', 'Aemit', 'Position', 'Velocity', 'vdisp', 'conc', 'rvir'])
+    return cat1
+
 def _LRGHOD_5p(cat, tag, mcut, sigma, m0, m1, alpha):
     ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
     nsat = simplehod.mkn_hard_power(cat['Mass'], m0, m1, alpha)
-    cat1 = cat.copy()
-    ncen, nsat = simplehod.mknint(mkseed(cat.comm, tag, "mkint"), ncen, nsat)
+    cat = make_balanced_catalog(cat, mkseed(cat.comm, tag, "mknint"), ncen, nsat)
 
-    nsat = nsat * ncen
-    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
-    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
-    aemit = cat1['Aemit'].compute()
+    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), cat['ncen'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute())
+    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), cat['nsat'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
+    ncen = cat['ncen'].compute()
+    nsat = cat['nsat'].compute()
+    aemit = cat['Aemit'].compute()
     if numpy.isinf(spos).any():
         raise
     if numpy.isinf(svel).any():
@@ -103,14 +116,14 @@ def _LRGHOD_5p(cat, tag, mcut, sigma, m0, m1, alpha):
 def _ELGHOD_5p(cat, tag, mcut, sigma, m0, m1, alpha):
     ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
     nsat = simplehod.mkn_soft_power(cat['Mass'], m0, m1, alpha)
-    cat1 = cat.copy()
-    ncen, nsat = simplehod.mknint(mkseed(cat.comm, tag, "mknint"), ncen, nsat)
+    cat = make_balanced_catalog(cat, mkseed(cat.comm, tag, "mknint"), ncen, nsat)
 
-    nsat = nsat * ncen
-    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
-    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
+    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), cat['ncen'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute())
+    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), cat['nsat'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
 
-    aemit = cat1['Aemit'].compute()
+    ncen = cat['ncen'].compute()
+    nsat = cat['nsat'].compute()
+    aemit = cat['Aemit'].compute()
     return numpy.append(cpos, spos, axis=0), numpy.append(cvel, svel, axis=0), \
             numpy.append(numpy.repeat(aemit, ncen), numpy.repeat(aemit, nsat), axis=0)
 
@@ -119,14 +132,19 @@ def _UNWISEHOD_5p(cat, tag, mcut, sigma, m0, m1, alpha):
     """Only difference with LRGHOD is to set concentration to zero."""
     ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
     nsat = simplehod.mkn_soft_power(cat['Mass'], m0, m1, alpha)
-    cat1 = cat.copy()
-    ncen, nsat = simplehod.mknint(mkseed(cat.comm, tag, "mknint"), ncen, nsat)
+    cat = make_balanced_catalog(cat, mkseed(cat.comm, tag, "mknint"), ncen, nsat)
 
-    nsat = nsat * ncen
-    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
-    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), nsat, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute(), 0, cat['rvir'].compute())
+    total_ncen = cat.comm.allreduce(cat['ncen'].sum().compute())
+    total_nsat = cat.comm.allreduce(cat['nsat'].sum().compute())
+    if cat.comm.rank == 0:
+        cat.logger.info("total number of centrals: %d", total_ncen)
+        cat.logger.info("total number of satellites: %d", total_nsat)
 
-    aemit = cat1['Aemit'].compute()
+    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), cat['ncen'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute())
+    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), cat['nsat'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute(), 0, cat['rvir'].compute())
+    ncen = cat['ncen'].compute()
+    nsat = cat['nsat'].compute()
+    aemit = cat['Aemit'].compute()
     return numpy.append(cpos, spos, axis=0), numpy.append(cvel, svel, axis=0), \
             numpy.append(numpy.repeat(aemit, ncen), numpy.repeat(aemit, nsat), axis=0)
     
@@ -136,12 +154,11 @@ def _QSOHOD_2p(cat, tag, mcen, sigma):
     ncen = fcen * simplehod.mkn_lognorm(cat['Mass'], mcen, sigma)
     ncen = ncen * 0.1 # duty cycle max 0.1
  
-    cat1 = cat.copy()
-    ncen, junk = simplehod.mknint(mkseed(cat.comm, tag, "mknint"), ncen, None)
+    cat = make_balanced_catalog(cat, mkseed(cat.comm, tag, "mknint"), ncen, None)
 
-    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), ncen, cat1['Position'].compute(), cat1['Velocity'].compute(), cat1['vdisp'].compute())
-
-    aemit = cat1['Aemit'].compute()
+    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), cat['ncen'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute())
+    ncen = cat['ncen'].compute()
+    aemit = cat['Aemit'].compute()
     return cpos, cvel, numpy.repeat(aemit, ncen)
 
 
