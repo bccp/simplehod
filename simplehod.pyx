@@ -508,6 +508,8 @@ cdef class RNGAdapter:
         if c > 1:
             # xmax = 1
             Mg_N = 1/4.
+        elif c == 0:
+            return 0
         else:
             # xmax = c
             Mg_N = nfw(c)
