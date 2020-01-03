@@ -212,7 +212,7 @@ LRGHOD_5p.x0 = 13.05649281, 0.43743876,13.96182037,13.61134496, 1.00853217
 
 def LRGHOD_3p(cat, logmcut, logm0, logm1):
     
-    return native.LRG(cat, tag=(SEED, "LRGHOD_3p"),
+    return crowcanyon.LRG(cat, tag=(SEED, "LRGHOD_3p"),
                     mcut=10**logmcut,
                     sigma=0.45,
                     alpha=1.0,
@@ -226,6 +226,7 @@ def RED_UNWISEHOD_5p(cat, logmcut, sigma, kappa, logm1, alpha):
                     mcut=10**logmcut,
                     sigma=sigma,
                     alpha=alpha,
+                    kappa=kappa,
                     m1=10**logm1,
                     )
 # Some made up numbers
@@ -236,6 +237,7 @@ def BLUE_UNWISEHOD_5p(cat, logmcut, sigma, kappa, logm1, alpha):
                     mcut=10**logmcut,
                     sigma=sigma,
                     alpha=alpha,
+                    kappa=kappa,
                     m1=10**logm1,
                     )
 # Some made up numbers
@@ -246,6 +248,7 @@ def GREEN_UNWISEHOD_5p(cat, logmcut, sigma, kappa, logm1, alpha):
                     mcut=10**logmcut,
                     sigma=sigma,
                     alpha=alpha,
+                    kappa=kappa,
                     m1=10**logm1,
                     )
 # Some made up numbers
@@ -280,13 +283,13 @@ def QSOHOD_1p(cat, logmcen):
     fcen = 3. # good reason to expect due to lack of kink
     ncen = fcen * simplehod.mkn_lognorm(cat['Mass'], mcen, sigma)
     ncen = ncen * 0.1 # duty cycle max 0.1
-    return crowcanyon.QSO(cat, tag=(SEED, "QSOHOD_1p"), mcen, sigma)
+    return crowcanyon.QSO(cat, tag=(SEED, "QSOHOD_1p"), mcen=mcen, sigma=sigma)
 QSOHOD_1p.x0 = 12.0,
 
 def QSOHOD_2p(cat, logmcen, sigma):
     mcen=10**logmcen
     sigma=sigma# * 2.303
-    return crowcanyon.QSO(cat, tag=(SEED, "QSOHOD_2p"), mcen, sigma)
+    return crowcanyon.QSO(cat, tag=(SEED, "QSOHOD_2p"), mcen=mcen, sigma=sigma)
 QSOHOD_2p.x0 = 12.0, 0.5
 
 ############################
