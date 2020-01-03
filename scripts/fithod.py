@@ -22,6 +22,7 @@ setup_logging()
 
 from scipy.optimize import minimize
 import simplehod
+from simplehod import crowcanyon
 
 SEED = 34913 # used by all HOD models
 
@@ -79,88 +80,6 @@ def readcat(path, subsample=False):
 
     cat.attrs['BoxSize'] = numpy.ones(3) * cat.attrs['BoxSize'][0] 
     return cat
-
-def mkseed(comm, *args):
-    return (SEED + hash(tuple(args)) % 314159) * comm.size + comm.rank
-
-def make_balanced_catalog(cat, seed, ncen, nsat):
-    ncen, nsat = simplehod.mknint(seed, ncen, nsat)
-    if nsat is None:
-        nsat = 0
-    mask = ncen > 0
-    cat1 = cat.copy()
-    cat1['ncen'] = ncen
-    cat1['nsat'] = nsat
-    cat1 = cat1[ncen != 0]
-    # load balancing, but keep sorted by Aemit
-    cat1.sort(keys=['Aemit'], usecols=['ncen', 'nsat', 'Aemit', 'Position', 'Velocity', 'vdisp', 'conc', 'rvir'])
-    return cat1
-
-def _LRGHOD_5p(cat, tag, mcut, sigma, m0, m1, alpha):
-    ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
-    nsat = simplehod.mkn_hard_power(cat['Mass'], m0, m1, alpha)
-    cat = make_balanced_catalog(cat, mkseed(cat.comm, tag, "mknint"), ncen, nsat)
-
-    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), cat['ncen'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute())
-    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), cat['nsat'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
-    ncen = cat['ncen'].compute()
-    nsat = cat['nsat'].compute()
-    aemit = cat['Aemit'].compute()
-    if numpy.isinf(spos).any():
-        raise
-    if numpy.isinf(svel).any():
-        raise
-    return numpy.append(cpos, spos, axis=0), numpy.append(cvel, svel, axis=0), \
-            numpy.append(numpy.repeat(aemit, ncen), numpy.repeat(aemit, nsat), axis=0)
-
-def _ELGHOD_5p(cat, tag, mcut, sigma, m0, m1, alpha):
-    ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
-    nsat = simplehod.mkn_soft_power(cat['Mass'], m0, m1, alpha)
-    cat = make_balanced_catalog(cat, mkseed(cat.comm, tag, "mknint"), ncen, nsat)
-
-    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), cat['ncen'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute())
-    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), cat['nsat'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute(), cat['conc'].compute(), cat['rvir'].compute())
-
-    ncen = cat['ncen'].compute()
-    nsat = cat['nsat'].compute()
-    aemit = cat['Aemit'].compute()
-    return numpy.append(cpos, spos, axis=0), numpy.append(cvel, svel, axis=0), \
-            numpy.append(numpy.repeat(aemit, ncen), numpy.repeat(aemit, nsat), axis=0)
-
-
-def _UNWISEHOD_5p(cat, tag, mcut, sigma, m0, m1, alpha):
-    """Only difference with LRGHOD is to set concentration to zero."""
-    ncen = simplehod.mkn_soft_logstep(cat['Mass'], mcut, sigma)
-    nsat = simplehod.mkn_soft_power(cat['Mass'], m0, m1, alpha)
-    cat = make_balanced_catalog(cat, mkseed(cat.comm, tag, "mknint"), ncen, nsat)
-
-    total_ncen = cat.comm.allreduce(cat['ncen'].sum().compute())
-    total_nsat = cat.comm.allreduce(cat['nsat'].sum().compute())
-    if cat.comm.rank == 0:
-        cat.logger.info("total number of centrals: %d", total_ncen)
-        cat.logger.info("total number of satellites: %d", total_nsat)
-
-    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), cat['ncen'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute())
-    spos, svel = simplehod.mksat(mkseed(cat.comm, tag, "mksat"), cat['nsat'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute(), 0, cat['rvir'].compute())
-    ncen = cat['ncen'].compute()
-    nsat = cat['nsat'].compute()
-    aemit = cat['Aemit'].compute()
-    return numpy.append(cpos, spos, axis=0), numpy.append(cvel, svel, axis=0), \
-            numpy.append(numpy.repeat(aemit, ncen), numpy.repeat(aemit, nsat), axis=0)
-    
-
-def _QSOHOD_2p(cat, tag, mcen, sigma):
-    fcen = 3. # good reason to expect due to lack of kink
-    ncen = fcen * simplehod.mkn_lognorm(cat['Mass'], mcen, sigma)
-    ncen = ncen * 0.1 # duty cycle max 0.1
- 
-    cat = make_balanced_catalog(cat, mkseed(cat.comm, tag, "mknint"), ncen, None)
-
-    cpos, cvel = simplehod.mkcen(mkseed(cat.comm, tag, "mkcen"), cat['ncen'].compute(), cat['Position'].compute(), cat['Velocity'].compute(), cat['vdisp'].compute())
-    ncen = cat['ncen'].compute()
-    aemit = cat['Aemit'].compute()
-    return cpos, cvel, numpy.repeat(aemit, ncen)
-
 
 def make_observation(mode, cat, HOD, logrp, params, pimax=None):
     rmax = numpy.nanmax(10**logrp)
@@ -282,106 +201,77 @@ def save_model(filename, cat, pimax, logrp, logwp, HOD, x, i):
 # function(cat, *params)
 # also add an x0 to set the starting point of the fit.
 def LRGHOD_5p(cat, logmcut, sigma, logm0, logm1, alpha):
-    mcut=10**logmcut
-    sigma=sigma
-    alpha=alpha
-    m0=10**logm0
-    m1=10**logm1
-    
-    pos, vel, aemit = _LRGHOD_5p(cat, "LRGHOD_5p", mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
-
-    cat2 = ArrayCatalog({
-        'Position' : pos,
-        'Velocity' : vel,
-        'Aemit' : aemit,
-    }, comm = cat.comm)
-
-    return cat2
+    return crowcanyon.LRG(cat, tag=(SEED, "LRGHOD_5p"),
+                    mcut=10**logmcut,
+                    sigma=sigma,
+                    alpha=alpha,
+                    m0=10**logm0,
+                    m1=10**logm1,
+                    )
 LRGHOD_5p.x0 = 13.05649281, 0.43743876,13.96182037,13.61134496, 1.00853217 
 
 def LRGHOD_3p(cat, logmcut, logm0, logm1):
-    mcut=10**logmcut
-    sigma=0.45
-    alpha=1.0
-    m0=10**logm0
-    m1=10**logm1
     
-    pos, vel, aemit = _LRGHOD_5p(cat, "LRGHOD_3p", mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
-    cat2 = ArrayCatalog({
-        'Position' : pos,
-        'Velocity' : vel,
-        'Aemit' : aemit,
-    }, comm = cat.comm)
-
-    return cat2
+    return native.LRG(cat, tag=(SEED, "LRGHOD_3p"),
+                    mcut=10**logmcut,
+                    sigma=0.45,
+                    alpha=1.0,
+                    m0=10**logm0,
+                    m1=10**logm1,
+                    )
 LRGHOD_3p.x0 = 13.05649281, 13.96182037,13.61134496 
 
-def ANY_UNWISEHOD_5p(cat, tag, logmcut, sigma, kappa, logm1, alpha):
-    """Martin White uses this model for Unwise."""
-    mcut=10**logmcut
-    sigma=sigma
-    alpha=alpha
-    m0=kappa * mcut
-    m1=10**logm1
-    
-    pos, vel, aemit = _UNWISEHOD_5p(cat, tag, mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
-
-    cat2 = ArrayCatalog({
-        'Position' : pos,
-        'Velocity' : vel,
-        'Aemit' : aemit,
-    }, comm = cat.comm)
-
-    return cat2
-
 def RED_UNWISEHOD_5p(cat, logmcut, sigma, kappa, logm1, alpha):
-    return ANY_UNWISEHOD_5p(cat, "RED_UNWISEHOD_5p", logmcut, sigma, kappa, logm1, alpha)
+    return crowcanyon.UNWISE(cat, tag=(SEED, "RED_UNWISEHOD_5p"),
+                    mcut=10**logmcut,
+                    sigma=sigma,
+                    alpha=alpha,
+                    m1=10**logm1,
+                    )
 # Some made up numbers
 RED_UNWISEHOD_5p.x0 = 11.6, 1.0, 0.1, 13.0, 0.7
 
 def BLUE_UNWISEHOD_5p(cat, logmcut, sigma, kappa, logm1, alpha):
-    return ANY_UNWISEHOD_5p(cat, "BLUE_UNWISEHOD_5p", logmcut, sigma, kappa, logm1, alpha)
+    return crowcanyon.UNWISE(cat, tag=(SEED, "BLUE_UNWISEHOD_5p"), 
+                    mcut=10**logmcut,
+                    sigma=sigma,
+                    alpha=alpha,
+                    m1=10**logm1,
+                    )
 # Some made up numbers
 BLUE_UNWISEHOD_5p.x0 = 11.6, 1.0, 0.1, 13.0, 0.7
 
 def GREEN_UNWISEHOD_5p(cat, logmcut, sigma, kappa, logm1, alpha):
-    return ANY_UNWISEHOD_5p(cat, "GREEN_UNWISEHOD_5p", logmcut, sigma, kappa, logm1, alpha)
+    return crowcanyon.UNWISE(cat, tag=(SEED, "GREEN_UNWISEHOD_5p"),
+                    mcut=10**logmcut,
+                    sigma=sigma,
+                    alpha=alpha,
+                    m1=10**logm1,
+                    )
 # Some made up numbers
 GREEN_UNWISEHOD_5p.x0 = 11.6, 1.0, 0.1, 13.0, 0.7
 
 
 def ELGHOD_5p(cat, logmcut, sigma, logm0, logm1, alpha):
-    mcut=10**logmcut
-    sigma=sigma
-    alpha=alpha
-    m0=10**logm0
-    m1=10**logm1
-    
-    pos, vel, aemit = _ELGHOD_5p(cat, "ELGHOD_5p", mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
-    cat2 = ArrayCatalog({
-        'Position' : pos,
-        'Velocity' : vel,
-        'Aemit' : aemit,
-    }, comm = cat.comm)
+    return crowcanyon.ELG(cat, tag=(SEED, "ELGHOD_5p"),
+                    mcut=10**logmcut,
+                    sigma=sigma,
+                    alpha=alpha,
+                    m0=10**logm0,
+                    m1=10**logm1,
+                    )
 
-    return cat2
 ELGHOD_5p.x0 = 12.0952,0.451427,14.9307,13.8337,0.990796 
 
 def ELGHOD_3p(cat, logmcut, logm0, logm1 ):
-    mcut=10**logmcut
-    sigma=0.45
-    alpha=1.0
-    m0=10**logm0
-    m1=10**logm1
-    
-    pos, vel, aemit = _ELGHOD_5p(cat, "ELGHOD_3p", mcut=mcut, sigma=sigma, alpha=alpha, m0=m0, m1=m1)
-    cat2 = ArrayCatalog({
-        'Position' : pos,
-        'Velocity' : vel,
-        'Aemit' : aemit,
-    }, comm = cat.comm)
+    return crowcanyon.ELG(cat, tag=(SEED, "ELGHOD_3p"), 
+                    mcut=10**logmcut,
+                    sigma=0.45,
+                    alpha=1.0,
+                    m0=10**logm0,
+                    m1=10**logm1,
+                    )
 
-    return cat2
 ELGHOD_3p.x0 = 12.0952,14.9307,13.8337
 
 def QSOHOD_1p(cat, logmcen):
@@ -390,35 +280,25 @@ def QSOHOD_1p(cat, logmcen):
     fcen = 3. # good reason to expect due to lack of kink
     ncen = fcen * simplehod.mkn_lognorm(cat['Mass'], mcen, sigma)
     ncen = ncen * 0.1 # duty cycle max 0.1
- 
-    pos, vel, aemit = _QSOHOD_2p(cat, "QSOHOD_1p", mcen, sigma)
-    cat2 = ArrayCatalog({
-        'Position' : pos,
-        'Velocity' : vel,
-        'Aemit' : aemit,
-    }, comm = cat.comm)
-    return cat2
+    return crowcanyon.QSO(cat, tag=(SEED, "QSOHOD_1p"), mcen, sigma)
 QSOHOD_1p.x0 = 12.0,
 
 def QSOHOD_2p(cat, logmcen, sigma):
     mcen=10**logmcen
     sigma=sigma# * 2.303
- 
-    pos, vel, aemit = _QSOHOD_2p(cat, "QSOHOD_2p", mcen, sigma)
-    cat2 = ArrayCatalog({
-        'Position' : pos,
-        'Velocity' : vel,
-        'Aemit' : aemit,
-    }, comm = cat.comm)
-
-    return cat2
+    return crowcanyon.QSO(cat, tag=(SEED, "QSOHOD_2p"), mcen, sigma)
 QSOHOD_2p.x0 = 12.0, 0.5
 
 ############################
 # main program
 #
 # list all models defined about here as strings.
-MODELS = ['LRGHOD_5p', 'LRGHOD_3p', 'ELGHOD_5p', 'ELGHOD_3p', 'QSOHOD_1p', 'QSOHOD_2p',
+MODELS = ['LRGHOD_5p',
+          'LRGHOD_3p',
+          'ELGHOD_5p', 
+          'ELGHOD_3p',
+          'QSOHOD_1p',
+          'QSOHOD_2p',
           'RED_UNWISEHOD_5p',
           'GREEN_UNWISEHOD_5p',
           'BLUE_UNWISEHOD_5p',

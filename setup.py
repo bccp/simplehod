@@ -1,5 +1,9 @@
-from setuptools import setup
+from setuptools import setup, Extension
 from Cython.Build import cythonize
+
+extensions = [
+        Extension("simplehod.simplehod", ["simplehod/simplehod.pyx"])
+]
 
 setup(
     name="simplehod",
@@ -10,6 +14,9 @@ setup(
     description="Simple HOD modelling of galaxy from simulation catalogs",
     install_requires=['cython', 'numpy'],
     license='BSD-2-Clause',
-    ext_modules = cythonize("simplehod.pyx"),
+    zip_safe = False,
+    package_dir = {'simplehod': 'simplehod'},
+    packages=['simplehod'],
+    ext_modules = cythonize(extensions),
 )
 
