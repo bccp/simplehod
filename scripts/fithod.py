@@ -12,6 +12,9 @@
 #  - shall write loss / ddof.
 #
 
+from mpi4py import MPI
+# print("Rank = %d Program started." % MPI.COMM_WORLD.rank)
+
 from nbodykit.lab import BigFileCatalog, SimulationBox2PCF, ArrayCatalog, RandomCatalog
 from nbodykit import cosmology, transform
 from nbodykit import setup_logging
@@ -399,22 +402,19 @@ def read_hod_fits(pattern):
     title_list = [s.strip() for s in  open(file).readlines()[1][1:].split(',')]
     return a_list, param_list, title_list, loss_list
 
-def fit_hodfit(a_list, param_list, title_list, loss_list):
+from scipy.interpolate import UnivariateSpline
+def fit_hodfit(a_list, param_list, title_list, loss_list, sf):
     poly_list = []
     z_list = 1 / a_list - 1
     fitted_param_list = []
     for i in range(len(title_list)):
         w = numpy.ones_like(a_list)
         w = 1 / loss_list # [loss_list < numpy.percentile(loss_list, 10.)] = 0
-        
-        if len(a_list) >= 2:
-            poly = numpy.polyfit(a_list-0.6667, param_list[:, i], min(2, len(a_list)), w=w)
-        else:
-            poly = param_list[:1, i]
-        poly = poly.round(2)
-        fitted_param_list.append(numpy.polyval(poly, a_list-0.6667))
-        poly_list.append(poly)
-    return numpy.array(poly_list), numpy.array(fitted_param_list)
+        w **= 0.5  
+        spl = UnivariateSpline(a_list, param_list[:, i], w=w, s=len(w) * sf) 
+        fitted_param_list.append(spl(a_list))
+        poly_list.append(spl)
+    return poly_list, numpy.array(fitted_param_list)
 
 ap1 = sp.add_parser("apply")
 ap1.add_argument("model", choices=MODELS , help='type of model')
@@ -422,6 +422,8 @@ ap1.add_argument("--subsample", type=int, default=None, help='type of model')
 ap1.add_argument("output", help='filename to store the result, BigFileCatalog is written')
 ap1.add_argument("--dataset", help='dataest to store the result, default is the model name', default=None, )
 ap1.add_argument("bestfits", help='filename pattern to store the best fit parameters. Quote this argument!')
+ap1.add_argument("--smoothfactor", default=1.0, type=float, help='factor to smooth the spline fitting of parameters. '
+'smaller value is less smoothing. Martin UNWISEHOD fit data uses 1e-3.')
 ap1.add_argument("fastpm", help='path to the fastpm halo catalog')
 
 def apply(ns):
@@ -432,7 +434,7 @@ def apply(ns):
         ns.dataset = ns.model
 
     a, param, title, loss = read_hod_fits(ns.bestfits)
-    poly_list, fitted_param_list = fit_hodfit(a, param, title, loss)
+    poly_list, fitted_param_list = fit_hodfit(a, param, title, loss, ns.smoothfactor)
 
     cat = BigFileCatalog(ns.fastpm, dataset='LL-0.200')
     if cat.comm.rank == 0:
@@ -450,7 +452,7 @@ def apply(ns):
     params = []
 
     for i, poly in enumerate(poly_list):
-        p1 = numpy.polyval(poly, aemit - 0.6667)
+        p1 = poly(aemit)
         mean, std = stat(p1, cat.comm)
 
         if cat.comm.rank == 0:
