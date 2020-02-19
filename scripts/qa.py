@@ -81,8 +81,8 @@ def main(ns):
         from matplotlib.gridspec import GridSpec
         from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-        fig = Figure(figsize=(6, 9), dpi=200)
-        gs = GridSpec(4, 2)
+        fig = Figure(figsize=(6, 12), dpi=200)
+        gs = GridSpec(5, 2)
 
         for i, l in enumerate([0, 2, 4]):
             ax = fig.add_subplot(gs[i, 0])
@@ -123,6 +123,14 @@ def main(ns):
         ax.set_ylabel('counts')
         ax.legend()
         ax.grid()
+
+        ax = fig.add_subplot(gs[4, 0],  projection="ast.mollweide")
+        ax.mapshow(data_hmap)
+        ax.set_title("data")
+
+        ax = fig.add_subplot(gs[4, 1],  projection="ast.mollweide")
+        ax.mapshow(rand_hmap)
+        ax.set_title("randoms")
 
         canvas = FigureCanvasAgg(fig)
         fig.tight_layout() 
