@@ -48,10 +48,10 @@ def main(ns):
     dndz_rand = RedshiftHistogram(ssrand, fsky=1, cosmo=Planck15, redshift='Z')
 
     hmap = healpix.histogrammap(ssdata['RA'].compute(), ssdata['DEC'].compute(), nside=128, perarea=True)
-    data_hmap = data.comm.allreduce(hmap)
+    data_hmap = data.comm.allreduce(hmap.astype('f8'))
 
     hmap = healpix.histogrammap(ssrand['RA'].compute(), ssrand['DEC'].compute(), nside=128, perarea=True)
-    rand_hmap = data.comm.allreduce(hmap)
+    rand_hmap = data.comm.allreduce(hmap.astype('f8'))
 
 
     ssdata['NZ'] = dndz_data.interpolate(ssdata['Z'])
@@ -76,6 +76,8 @@ def main(ns):
     xir.save(basename + '-xir' + '.' + ext)
 
     if data.comm.rank == 0:
+        data_hmap.tofile(basename + 'data-hmap.f8')
+        rand_hmap.tofile(basename + 'rand-hmap.f8')
 
         from matplotlib.figure import Figure
         from matplotlib.gridspec import GridSpec
