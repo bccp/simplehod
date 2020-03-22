@@ -20,6 +20,7 @@ from nbodykit import cosmology, transform
 from nbodykit import setup_logging
 import dask.array as da
 import numpy
+import warnings
 
 setup_logging()
 
@@ -392,7 +393,12 @@ def read_hod_fits(pattern):
         a = float(re.search('[0-9]\.[0-9][0-9][0-9][0-9]', file).group())
         params = numpy.loadtxt(open(file, 'rb').readlines()[:3])
         params = numpy.atleast_1d(params)
-        loss =float(open(file, 'r').readlines()[0].split('=')[1])
+        words = open(file, 'r').readlines()[0].split('=')
+        if len(words) != 2:
+            loss = 1
+            warnings.warn("File does not have a header, assuming loss = 1.", RuntimeWarning)
+        else:
+            loss = float(words[1])
         param_list.append(params)
         loss_list.append(loss)
         a_list.append(a)
